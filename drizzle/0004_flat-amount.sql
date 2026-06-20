@@ -1,0 +1,1 @@
+ALTER TABLE "pricing_rules" ADD COLUMN "flat_amount" numeric(10, 2);

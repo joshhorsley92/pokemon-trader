@@ -1,0 +1,38 @@
+name: Daily TCGCSV price sync
+
+on:
+  schedule:
+    # TCGCSV publishes daily around 20:00 UTC; run 90 minutes later
+    - cron: "30 21 * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Full re-sync (ignore modifiedOn deltas)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: tcgcsv-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run sync
+        env:
+          DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+        run: npx tsx scripts/sync-tcgcsv.ts ${{ inputs.full && '--full' || '' }}
+      # After the catalog refresh so new sets/products are matchable.
+      # Vendor failures exit non-zero but don't block each other.
+      - name: Sync vendor buylists
+        env:
+          DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+        run: npx tsx scripts/sync-buylists.ts

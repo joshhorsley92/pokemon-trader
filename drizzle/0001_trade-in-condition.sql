@@ -1,0 +1,2 @@
+ALTER TABLE "submission_trade_in_items" ADD COLUMN "condition" text;--> statement-breakpoint
+ALTER TABLE "submission_trade_in_items" ADD COLUMN "condition_multiplier" numeric(4, 3) DEFAULT '1' NOT NULL;

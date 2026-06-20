@@ -1,0 +1,476 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+/* ===== Trade Counter — public design tokens ===== */
+
+:root {
+  --felt: #1d4233;          /* deep table felt */
+  --felt-dark: #143125;
+  --felt-line: #2c5a46;     /* stitched line on the mat */
+  --oak: #9a6b35;           /* counter wood */
+  --manila: #f3ead7;        /* card-saver manila */
+  --slip: #fffdf6;          /* receipt paper */
+  --ink: #20251f;
+  --stamp: #b3402e;         /* rubber-stamp red */
+  --tag: #ffd84d;           /* price-sticker yellow */
+}
+
+.font-display {
+  font-family: var(--font-display), serif;
+}
+
+.font-slip {
+  font-family: var(--font-slip), monospace;
+}
+
+/* The felt counter mat — animated aurora drifting over deep table felt,
+   finished with a film-grain texture. Painted on fixed pseudo-elements so
+   sticky/docked children are unaffected. */
+.counter-felt {
+  position: relative;
+  background: transparent;
+}
+
+.counter-felt::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background-color: var(--felt);
+  background-image:
+    radial-gradient(45% 40% at 20% 25%, rgba(46, 139, 110, 0.55), transparent 70%),
+    radial-gradient(40% 35% at 80% 15%, rgba(23, 90, 99, 0.5), transparent 70%),
+    radial-gradient(50% 45% at 70% 85%, rgba(17, 60, 46, 0.85), transparent 72%),
+    radial-gradient(35% 30% at 30% 80%, rgba(64, 145, 108, 0.35), transparent 70%),
+    radial-gradient(28% 24% at 55% 45%, rgba(255, 216, 77, 0.06), transparent 75%),
+    radial-gradient(ellipse at 50% -20%, rgba(255, 255, 255, 0.08), transparent 60%),
+    radial-gradient(ellipse at 50% 120%, rgba(0, 0, 0, 0.35), transparent 60%);
+  background-size: 170% 170%;
+  background-position: 0% 0%;
+  animation: felt-drift 50s ease-in-out infinite alternate;
+}
+
+/* Film grain so the gradients read as felt, not plastic */
+.counter-felt::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes felt-drift {
+  0% {
+    background-position: 0% 0%;
+  }
+  50% {
+    background-position: 60% 100%;
+  }
+  100% {
+    background-position: 100% 30%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .counter-felt::before {
+    animation: none;
+  }
+}
+
+/* Stitched edge, like the sewn border of a playmat */
+.felt-stitch {
+  border: 2px dashed var(--felt-line);
+  border-radius: 12px;
+}
+
+/* ===== The display case: wood frame + glass front ===== */
+
+/* Varnished wood counter frame */
+.case-frame {
+  padding: 12px;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, #b48049 0%, #8f6231 28%, #744d24 70%, #5e3d1c 100%);
+  background-blend-mode: multiply;
+  box-shadow:
+    0 22px 44px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* Glass interior — items live "under" the glare layer */
+.case-glass {
+  position: relative;
+  border-radius: 10px;
+  background-color: rgba(8, 28, 20, 0.45);
+  background-image: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.09),
+    rgba(255, 255, 255, 0.02) 30%,
+    rgba(190, 225, 215, 0.05)
+  );
+  box-shadow:
+    inset 0 0 46px rgba(0, 0, 0, 0.4),
+    inset 0 2px 8px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+/* Diagonal glare streaks across the glass, above the contents */
+.case-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      115deg,
+      transparent 28%,
+      rgba(255, 255, 255, 0.13) 37%,
+      rgba(255, 255, 255, 0.03) 45%,
+      transparent 53%
+    ),
+    linear-gradient(
+      115deg,
+      transparent 62%,
+      rgba(255, 255, 255, 0.07) 68%,
+      transparent 76%
+    );
+}
+
+/* Case lighting — warm LED wash from the top edge */
+.case-glass::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 5%;
+  right: 5%;
+  height: 56px;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(
+    60% 100% at 50% 0%,
+    rgba(255, 252, 235, 0.2),
+    transparent 70%
+  );
+}
+
+/* Each item rests on a glass shelf edge */
+.shelf-item {
+  position: relative;
+}
+
+.shelf-item::after {
+  content: "";
+  position: absolute;
+  left: 3%;
+  right: 3%;
+  bottom: -10px;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.32),
+    rgba(255, 255, 255, 0.04)
+  );
+  opacity: 0.55;
+  filter: blur(0.5px);
+}
+
+/* ===== Your side: rubber counter mat + tagged items ===== */
+
+/* The mat on the customer's side of the counter */
+.counter-mat {
+  background-color: var(--felt-dark);
+  background-image:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.05), transparent 60%),
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.015) 0 2px,
+      transparent 2px 6px
+    );
+  border-radius: 12px;
+  box-shadow:
+    inset 0 2px 10px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* Product standing on the mat, with a contact shadow */
+.standing-item {
+  position: relative;
+}
+
+.standing-item::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  width: 78%;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(
+    50% 50% at 50% 50%,
+    rgba(0, 0, 0, 0.5),
+    transparent 75%
+  );
+  filter: blur(2px);
+}
+
+/* Manila shop tag tied to the item */
+.manila-tag {
+  position: relative;
+  background: var(--manila);
+  border-radius: 6px;
+  box-shadow:
+    0 8px 14px -7px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* Punched hole in the tag, facing the item */
+.manila-tag::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--felt-dark);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.6),
+    0 0 0 2px rgba(0, 0, 0, 0.12);
+}
+
+/* Hot buy chip — ember gradient, used wherever a bonus applies */
+.hot-tag {
+  display: inline-block;
+  font-family: var(--font-slip), monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: linear-gradient(100deg, #d9480f, #e8590c 50%, #f08c00);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+
+/* Small brass plaque label for the case */
+.brass-plaque {
+  display: inline-block;
+  font-family: var(--font-slip), monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #3d2c10;
+  padding: 3px 14px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #e8c878, #c49a4a 55%, #a87f35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* The deal slip: receipt paper with a torn bottom edge */
+.deal-slip {
+  background: var(--slip);
+  color: var(--ink);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.deal-slip-tear {
+  height: 12px;
+  background: var(--slip);
+  clip-path: polygon(
+    0 0, 100% 0, 100% 35%,
+    97.5% 100%, 95% 35%, 92.5% 100%, 90% 35%, 87.5% 100%, 85% 35%,
+    82.5% 100%, 80% 35%, 77.5% 100%, 75% 35%, 72.5% 100%, 70% 35%,
+    67.5% 100%, 65% 35%, 62.5% 100%, 60% 35%, 57.5% 100%, 55% 35%,
+    52.5% 100%, 50% 35%, 47.5% 100%, 45% 35%, 42.5% 100%, 40% 35%,
+    37.5% 100%, 35% 35%, 32.5% 100%, 30% 35%, 27.5% 100%, 25% 35%,
+    22.5% 100%, 20% 35%, 17.5% 100%, 15% 35%, 12.5% 100%, 10% 35%,
+    7.5% 100%, 5% 35%, 2.5% 100%, 0 35%
+  );
+}
+
+/* Holofoil shimmer — reserved for the deal balance only */
+.holo-chip {
+  background: linear-gradient(
+    100deg,
+    #7ee7ff 0%,
+    #9b8cff 30%,
+    #ff9bd6 55%,
+    #ffe27a 80%,
+    #7ee7ff 100%
+  );
+  background-size: 200% 100%;
+  animation: holo-sheen 6s linear infinite;
+}
+
+@keyframes holo-sheen {
+  from { background-position: 0% 0; }
+  to { background-position: 200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .holo-chip { animation: none; }
+}
+
+/* Price sticker, like a price gun label */
+.price-tag {
+  background: var(--tag);
+  color: var(--ink);
+  font-family: var(--font-slip), monospace;
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 1px 6px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+/* Rubber stamp status mark */
+.stamp {
+  font-family: var(--font-display), serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--stamp);
+  border: 3px solid var(--stamp);
+  border-radius: 6px;
+  padding: 2px 10px;
+  transform: rotate(-3deg);
+  display: inline-block;
+}

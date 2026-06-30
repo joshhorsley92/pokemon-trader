@@ -14,6 +14,7 @@ import { db, tables } from "@/db";
 import { hotBuyBonuses } from "@/lib/hot-buys";
 import {
   computeQuote,
+  dollarsDown,
   type PricingRule,
   type ProductCategory,
   type Quote,
@@ -166,5 +167,13 @@ export async function quoteFromDb(
   }));
 
   const quote = computeQuote(quotable, rules, rateType, settings);
-  return { ...quote, manualLines };
+  // Whole-dollar payout: the shop never hands a customer cents, so every
+  // trade-in credit/cash line rounds DOWN to the dollar. (computeQuote stays
+  // pure/configurable; this is the real-money chokepoint.)
+  const lines = quote.lines.map((l) => {
+    const unitCredit = dollarsDown(l.unitCredit);
+    return { ...l, unitCredit, lineCredit: unitCredit * l.quantity };
+  });
+  const total = lines.reduce((sum, l) => sum + l.lineCredit, 0);
+  return { ...quote, lines, total, manualLines };
 }

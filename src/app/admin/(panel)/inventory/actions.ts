@@ -5,7 +5,22 @@ import { and, eq, ilike } from "drizzle-orm";
 import { z } from "zod";
 import { db, tables } from "@/db";
 import { requireSession } from "@/lib/auth";
+import { setSetting } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
+
+// Quick sell-pricing knob: "market + X%". Stored as a multiplier
+// (e.g. +3% → 1.03). Negative values discount below market.
+const markupPercentSchema = z.coerce.number().min(-90).max(1000);
+
+export async function setInventoryMarkup(formData: FormData): Promise<void> {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const pct = markupPercentSchema.parse(formData.get("percent"));
+  const multiplier = Math.round((1 + pct / 100) * 1000) / 1000;
+  await setSetting(shopId, "inventory_market_markup", multiplier);
+  revalidatePath("/admin/inventory");
+  revalidatePath("/admin/show");
+}
 
 const itemSchema = z.object({
   title: z.string().min(1).max(300),

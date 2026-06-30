@@ -49,6 +49,29 @@ export const inventoryStatus = pgEnum("inventory_status", [
   "hidden",
 ]);
 
+// A booth/show session groups every on-the-spot buy & sell so the day can be
+// reconciled and exported at the end. See src/lib/show.ts.
+export const showSessionStatus = pgEnum("show_session_status", [
+  "open",
+  "closed",
+]);
+
+// What a counter line did: 'buy' = the shop acquired cards (paid cash/credit);
+// 'sell' = the shop sold cards out of the case.
+export const showTxnKind = pgEnum("show_txn_kind", ["buy", "sell"]);
+
+// A customer-built booth trade (scanned the session QR) and its lines move
+// through this lifecycle as the operator works the pile.
+export const showPendingStatus = pgEnum("show_pending_status", [
+  "pending",
+  "accepted",
+  "dismissed",
+]);
+
+// Which side of the trade a pending line sits on: 'give' = card the customer
+// is handing over (becomes a buy); 'want' = a case item they want (a sell).
+export const showPendingSide = pgEnum("show_pending_side", ["give", "want"]);
+
 // ===== Tenancy (one row per installed shop) =====
 //
 // The catalog/buylist tables below stay GLOBAL — they're source-of-truth
@@ -422,6 +445,124 @@ export const submissionTradeForItems = pgTable("submission_trade_for_items", {
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
 });
+
+// ===== Show mode: on-the-spot booth buying & selling =====
+//
+// A session is one day/event. Each transaction is a single buy or sell line;
+// the log is the source of truth for end-of-show reconciliation and inventory
+// effects are derived from it. Staff-operated (admin-authed), so prices may be
+// computed by the engine OR overridden by hand (manualPrice).
+
+export const showSessions = pgTable(
+  "show_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    status: showSessionStatus("status").notNull().default("open"),
+    // Unguessable token encoded in the booth QR so customers can self-build
+    // trades into THIS session. Rotated by opening a new session.
+    joinToken: text("join_token").unique(),
+    openedBy: uuid("opened_by").references(() => adminUsers.id),
+    openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [index("idx_show_sessions_shop").on(t.shopId)],
+);
+
+export const showTransactions = pgTable(
+  "show_transactions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => showSessions.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    kind: showTxnKind("kind").notNull(),
+    // Nullable: a hand-typed line (e.g. a graded slab) need not match catalog.
+    productId: integer("product_id").references(() => catalogProducts.id),
+    title: text("title").notNull(), // snapshot, survives catalog changes
+    category: productCategory("category").notNull(),
+    condition: text("condition"),
+    printing: text("printing"),
+    quantity: integer("quantity").notNull().default(1),
+    // Buys only: what the payout was in (cash | store_credit). Null for sells.
+    rateType: rateType("rate_type"),
+    unitPrice: numeric("unit_price", { precision: 10, scale: 2 }).notNull(),
+    lineTotal: numeric("line_total", { precision: 10, scale: 2 }).notNull(),
+    manualPrice: boolean("manual_price").notNull().default(false),
+    // Buys only: 'queued' (logged, add to inventory later) | 'added' (now live
+    // stock). Null for sells.
+    inventoryAction: text("inventory_action"),
+    // The inventory row this line created (buy→added) or drew down (sell).
+    inventoryItemId: uuid("inventory_item_id").references(
+      () => inventoryItems.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    index("idx_show_txn_session").on(t.sessionId),
+    index("idx_show_txn_shop").on(t.shopId),
+  ],
+);
+
+// A customer-built trade waiting at the counter. The operator reviews it and
+// accepts lines (each give → a buy txn, each want → a sell txn) into the
+// session, or dismisses it. Kept separate from show_transactions so a pending
+// pile never touches inventory or the running tally until accepted.
+export const showPendingTrades = pgTable(
+  "show_pending_trades",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => showSessions.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    label: text("label"), // customer's first name, optional
+    rateType: rateType("rate_type").notNull().default("store_credit"),
+    status: showPendingStatus("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [index("idx_show_pending_session").on(t.sessionId)],
+);
+
+export const showPendingItems = pgTable(
+  "show_pending_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    pendingId: uuid("pending_id")
+      .notNull()
+      .references(() => showPendingTrades.id, { onDelete: "cascade" }),
+    side: showPendingSide("side").notNull(),
+    // 'give' lines carry a catalog product; 'want' lines carry an inventory
+    // item the customer picked from the case.
+    productId: integer("product_id").references(() => catalogProducts.id),
+    inventoryItemId: uuid("inventory_item_id").references(
+      () => inventoryItems.id,
+      { onDelete: "set null" },
+    ),
+    title: text("title").notNull(),
+    category: productCategory("category").notNull(),
+    condition: text("condition"),
+    printing: text("printing"),
+    quantity: integer("quantity").notNull().default(1),
+    // Graded slabs can't be auto-priced (free data can't value them); the flag
+    // survives the booth boundary so the operator quotes them by hand instead
+    // of the engine silently pricing the slab as a raw card.
+    graded: boolean("graded").notNull().default(false),
+    grader: text("grader"),
+    grade: text("grade"),
+    status: showPendingStatus("status").notNull().default("pending"),
+  },
+  (t) => [index("idx_show_pending_items_pending").on(t.pendingId)],
+);
 
 // ===== Ops =====
 

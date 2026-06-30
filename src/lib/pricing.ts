@@ -185,3 +185,15 @@ export function computeQuote(
 export function toMoneyString(amount: number): string {
   return amount.toFixed(2);
 }
+
+// Vendors don't deal in cents. Sell prices (what the customer pays) round UP to
+// the next dollar; buy prices (what the shop pays out) round DOWN. Cents are
+// normalized first to avoid float drift turning $3.00 into $4.
+/** Round a sell price up to the nearest whole dollar. */
+export function dollarsUp(amount: number): number {
+  return Math.ceil(Math.round(amount * 100) / 100);
+}
+/** Round a buy/payout price down to the nearest whole dollar. */
+export function dollarsDown(amount: number): number {
+  return Math.floor(Math.round(amount * 100) / 100);
+}

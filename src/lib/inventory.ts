@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import type { AppSettings } from "@/lib/settings";
-import { roundToStep } from "@/lib/pricing";
+import { dollarsUp } from "@/lib/pricing";
 
 export type InventoryListing = {
   id: string;
@@ -26,10 +26,13 @@ export function effectiveInventoryPrice(
   marketPrice: number | null,
   markup: number,
 ): { price: number; source: "fixed" | "market" } | null {
+  // Fixed asking prices are the operator's explicit call — left as set. The
+  // market-derived sell price rounds UP to the whole dollar (no cents at the
+  // table).
   if (askingPrice !== null) return { price: askingPrice, source: "fixed" };
   if (marketPrice !== null) {
     return {
-      price: roundToStep(marketPrice * markup, 0.25),
+      price: dollarsUp(marketPrice * markup),
       source: "market",
     };
   }

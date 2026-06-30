@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyRounding,
   computeQuote,
+  dollarsDown,
+  dollarsUp,
   resolveRule,
   roundToStep,
   type PricingRule,
@@ -65,6 +67,23 @@ describe("roundToStep", () => {
 
   it("avoids float drift", () => {
     expect(roundToStep(0.1 + 0.2, 0.05)).toBe(0.3);
+  });
+});
+
+describe("whole-dollar deal rounding", () => {
+  it("rounds sell prices up to the next dollar", () => {
+    expect(dollarsUp(3.01)).toBe(4);
+    expect(dollarsUp(3.99)).toBe(4);
+    expect(dollarsUp(3.0)).toBe(3); // exact dollar stays
+  });
+  it("rounds buy prices down to the dollar", () => {
+    expect(dollarsDown(3.99)).toBe(3);
+    expect(dollarsDown(3.01)).toBe(3);
+    expect(dollarsDown(3.0)).toBe(3);
+  });
+  it("normalizes cents so float drift can't bump a whole dollar", () => {
+    expect(dollarsUp(0.1 + 0.2 + 2.7)).toBe(3); // 2.9999... → 3, not 4
+    expect(dollarsDown(3.0)).toBe(3);
   });
 });
 

@@ -6,6 +6,7 @@ import { logout } from "./actions";
 
 const NAV = [
   { href: "/admin", label: "Trades" },
+  { href: "/admin/show", label: "Show" },
   { href: "/admin/pricing", label: "Pricing" },
   { href: "/admin/hot-buys", label: "Hot Buys" },
   { href: "/admin/inventory", label: "Inventory" },

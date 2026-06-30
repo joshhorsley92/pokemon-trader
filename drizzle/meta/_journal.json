@@ -64,6 +64,27 @@
       "when": 1781710573962,
       "tag": "0008_multi_tenant_shops",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1782761658239,
+      "tag": "0009_yielding_barracuda",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1782790181694,
+      "tag": "0010_dark_sister_grimm",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782828016403,
+      "tag": "0011_panoramic_amazoness",
+      "breakpoints": true
     }
   ]
 }

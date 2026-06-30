@@ -35,6 +35,7 @@ export function TradeCounter({
   initialWantId,
   quoteValidityDays,
   rounding,
+  booth,
 }: {
   shopName: string;
   inventory: ShopItem[];
@@ -43,8 +44,15 @@ export function TradeCounter({
   initialWantId: string | null;
   quoteValidityDays: number;
   rounding: RoundingSettings;
+  /** When set, the builder submits into a live booth session instead of the
+      async submissions queue — no contact form, lands as a pending trade. */
+  booth?: { token: string };
 }) {
   const router = useRouter();
+  const [boothDone, setBoothDone] = useState(false);
+  // Mobile: the docked deal slip collapses to a one-line bar so it doesn't eat
+  // the screen. Desktop shows it as a full side column regardless.
+  const [slipOpen, setSlipOpen] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [rateType, setRateType] = useState<"store_credit" | "cash">(
     "store_credit",
@@ -187,6 +195,50 @@ export function TradeCounter({
   async function submit(form: FormData) {
     setSubmitting(true);
     setSubmitError(null);
+
+    // Booth mode: drop the pile into the live session as a pending trade.
+    if (booth) {
+      try {
+        const res = await fetch(`/api/booth/${booth.token}/submit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: form.get("name") ?? "",
+            rateType,
+            gives: tradeIn.map((l) => ({
+              productId: l.product.id,
+              title: l.product.name,
+              category: l.product.category,
+              condition: l.graded ? null : l.condition,
+              printing: l.printing,
+              quantity: l.quantity,
+              graded: l.graded,
+              grader: l.grader,
+              grade: l.grade,
+            })),
+            wants: wants.map((w) => ({
+              inventoryItemId: w.item.id,
+              title: w.item.title,
+              category: w.item.category,
+              condition: w.item.condition,
+              quantity: w.quantity,
+            })),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setSubmitError(data.error ?? "Something went wrong — try again.");
+          return;
+        }
+        setBoothDone(true);
+      } catch {
+        setSubmitError("Network problem — please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch("/api/submissions", {
         method: "POST",
@@ -229,8 +281,38 @@ export function TradeCounter({
     }
   }
 
+  if (boothDone) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16 text-center">
+        <div className="felt-stitch p-8">
+          <p className="text-5xl">🤝</p>
+          <h2 className="mt-4 font-display text-2xl font-semibold text-white">
+            Sent to the counter
+          </h2>
+          <p className="mt-2 text-sm text-emerald-100/80">
+            Hand your cards to the seller — your list is on their screen with
+            prices ready. They&apos;ll finish the deal with you.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setTradeIn([]);
+              setWants([]);
+              setQuote(null);
+              setStep(1);
+              setBoothDone(false);
+            }}
+            className="mt-6 rounded-md bg-[var(--manila)] px-5 py-2.5 font-display text-base font-semibold text-[var(--ink)] shadow"
+          >
+            Start another
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-6 px-4 pb-56 lg:grid-cols-[1fr_330px] lg:pb-12">
+    <div className="mx-auto grid w-full max-w-6xl gap-6 px-4 pb-24 lg:grid-cols-[1fr_330px] lg:pb-12">
       <div className="min-w-0">
         {/* Step rail */}
         <ol className="mb-6 flex items-center gap-1 text-sm">
@@ -265,6 +347,7 @@ export function TradeCounter({
             onLine={setLineAt}
             onGraded={setTradeInGraded}
             onNext={() => setStep(2)}
+            booth={!!booth}
           />
         )}
         {step === 2 && (
@@ -291,26 +374,58 @@ export function TradeCounter({
             onPhotos={setPhotos}
             onBack={() => setStep(2)}
             onSubmit={submit}
+            booth={!!booth}
           />
         )}
       </div>
 
-      {/* Deal slip: always visible — sticky right column on lg+, docked at
-          the bottom (abbreviated, expandable per section) below that */}
+      {/* Deal slip: sticky right column on lg+; on mobile it docks at the
+          bottom collapsed to a one-line bar, tap to expand. */}
       <aside className="fixed inset-x-0 bottom-0 z-20 lg:static">
-        <div className="mx-auto max-h-[55vh] max-w-md overflow-y-auto lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)]">
-          <DealSlip
-            shopName={shopName}
-            tradeIn={tradeIn}
-            wants={wants}
-            quote={quote}
-            quoteLoading={quoteLoading}
-            rateType={rateType}
-            cashRemainder={cashRemainder}
-            onCashRemainder={setCashRemainder}
-            quoteValidityDays={quoteValidityDays}
-            rounding={rounding}
-          />
+        <div className="mx-auto max-w-md lg:sticky lg:top-6">
+          {/* Mobile-only summary bar */}
+          <button
+            type="button"
+            onClick={() => setSlipOpen((o) => !o)}
+            aria-expanded={slipOpen}
+            className="flex w-full items-center justify-between gap-3 border-t border-neutral-300 bg-[var(--slip)] px-4 py-2.5 text-left shadow-[0_-6px_16px_-6px_rgba(0,0,0,0.5)] lg:hidden"
+          >
+            <span className="text-sm font-semibold text-[var(--ink)]">
+              {slipOpen ? "Hide deal slip" : "Deal slip"}
+              {tradeIn.length + wants.length > 0 && (
+                <span className="ml-1 font-normal text-neutral-500">
+                  · {tradeIn.length + wants.length} item
+                  {tradeIn.length + wants.length === 1 ? "" : "s"}
+                </span>
+              )}
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="font-slip text-base font-bold tabular-nums text-[var(--ink)]">
+                {money(quote?.total ?? 0)}
+              </span>
+              <span aria-hidden="true" className="text-neutral-500">
+                {slipOpen ? "▾" : "▴"}
+              </span>
+            </span>
+          </button>
+          <div
+            className={`${
+              slipOpen ? "max-h-[55vh] overflow-y-auto" : "hidden"
+            } lg:block lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto`}
+          >
+            <DealSlip
+              shopName={shopName}
+              tradeIn={tradeIn}
+              wants={wants}
+              quote={quote}
+              quoteLoading={quoteLoading}
+              rateType={rateType}
+              cashRemainder={cashRemainder}
+              onCashRemainder={setCashRemainder}
+              quoteValidityDays={quoteValidityDays}
+              rounding={rounding}
+            />
+          </div>
         </div>
       </aside>
     </div>
@@ -331,6 +446,7 @@ function StepTradeIn({
   onLine,
   onGraded,
   onNext,
+  booth = false,
 }: {
   tradeIn: TradeInLine[];
   quote: QuoteDto | null;
@@ -343,6 +459,7 @@ function StepTradeIn({
   onLine: (idx: number, patch: Partial<TradeInLine>) => void;
   onGraded: (idx: number, graded: boolean) => void;
   onNext: () => void;
+  booth?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<CatalogHit[]>([]);
@@ -672,7 +789,7 @@ function StepTradeIn({
                         <p className="mt-0.5 font-slip text-xs text-neutral-600">
                           {line.graded ? (
                             <span className="font-semibold text-amber-700">
-                              Custom offer after review
+                              {booth ? "Priced by the seller" : "Custom offer after review"}
                             </span>
                           ) : quoted ? (
                             `${money(quoted.unitCredit)} each in ${
@@ -791,8 +908,9 @@ function StepTradeIn({
 
                     {line.graded && (
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Graded cards are quoted by hand — we&apos;ll send a custom
-                        offer after you submit.
+                        {booth
+                          ? "The seller prices graded slabs by hand at the table."
+                          : "Graded cards are quoted by hand — we'll send a custom offer after you submit."}
                       </p>
                     )}
                   </div>
@@ -1016,6 +1134,7 @@ function StepShake({
   onPhotos,
   onBack,
   onSubmit,
+  booth = false,
 }: {
   tradeIn: TradeInLine[];
   wants: WantLine[];
@@ -1029,6 +1148,8 @@ function StepShake({
   onPhotos: (photos: string[]) => void;
   onBack: () => void;
   onSubmit: (form: FormData) => void;
+  /** Booth flow: skip the contact form, name optional, "send to counter" */
+  booth?: boolean;
 }) {
   const tradeInCount = tradeIn.length;
   const credit = quote?.total ?? 0;
@@ -1052,9 +1173,42 @@ function StepShake({
         Let&apos;s shake on it
       </h2>
       <p className="mt-1 text-sm text-emerald-100/80">
-        Leave your details and we&apos;ll look the deal over — usually within a
-        day. Nothing ships and nothing&apos;s final until we&apos;ve talked.
+        {booth
+          ? "Send this list to the seller's screen — they'll price it up and finish the deal with you at the table."
+          : "Leave your details and we'll look the deal over — usually within a day. Nothing ships and nothing's final until we've talked."}
       </p>
+
+      {booth && tradeInCount > 0 && (
+        <div className="mt-3 rounded-md bg-emerald-950/50 p-3 text-center">
+          {wants.length === 0 ? (
+            <p className="text-sm text-emerald-50">
+              You get{" "}
+              <span className="font-bold">{money(credit)}</span>{" "}
+              {rateType === "cash" ? "cash" : "in store credit"} for your cards.
+            </p>
+          ) : balance < 0 ? (
+            <p className="text-sm text-emerald-50">
+              You pay <span className="font-bold">{money(Math.abs(balance))}</span>{" "}
+              at the table.
+            </p>
+          ) : balance > 0 ? (
+            <p className="text-sm text-emerald-50">
+              You get back{" "}
+              <span className="font-bold">
+                {money(payoutAsCash ? remainderCash : balance)}
+              </span>{" "}
+              {rateType === "cash" || payoutAsCash ? "cash" : "in store credit"}.
+            </p>
+          ) : (
+            <p className="text-sm text-emerald-50">
+              Even trade — nothing changes hands.
+            </p>
+          )}
+          <p className="mt-0.5 text-[11px] text-emerald-100/60">
+            graded slabs are priced by the seller and added on top
+          </p>
+        </div>
+      )}
 
       {tradeInCount === 0 ? (
         <p className="mt-6 rounded-md bg-emerald-950/40 p-4 text-sm text-emerald-100/80">
@@ -1075,53 +1229,74 @@ function StepShake({
             className="absolute -left-[9999px] h-0 w-0 opacity-0"
             aria-hidden="true"
           />
-          <div className="grid gap-4 sm:grid-cols-2">
+          {booth ? (
             <label className="block">
-              <span className="text-sm font-medium text-emerald-50">Name</span>
+              <span className="text-sm font-medium text-emerald-50">
+                Your first name{" "}
+                <span className="text-emerald-100/60">(optional)</span>
+              </span>
               <input
                 name="name"
-                required
-                maxLength={120}
-                className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
+                maxLength={60}
+                placeholder="So the seller can call you over"
+                className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2 sm:max-w-xs"
               />
             </label>
-            <label className="block">
-              <span className="text-sm font-medium text-emerald-50">Email</span>
-              <input
-                name="email"
-                type="email"
-                required
-                maxLength={200}
-                className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
-              />
-            </label>
-          </div>
-          <label className="block">
-            <span className="text-sm font-medium text-emerald-50">
-              Phone <span className="text-emerald-100/60">(optional)</span>
-            </span>
-            <input
-              name="phone"
-              type="tel"
-              maxLength={40}
-              className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2 sm:max-w-xs"
-            />
-          </label>
-          <label className="block">
-            <span className="text-sm font-medium text-emerald-50">
-              Anything we should know?{" "}
-              <span className="text-emerald-100/60">(optional)</span>
-            </span>
-            <textarea
-              name="message"
-              rows={3}
-              maxLength={2000}
-              placeholder="Condition notes, what you're after, best time to reach you…"
-              className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
-            />
-          </label>
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="text-sm font-medium text-emerald-50">
+                    Name
+                  </span>
+                  <input
+                    name="name"
+                    required
+                    maxLength={120}
+                    className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-sm font-medium text-emerald-50">
+                    Email
+                  </span>
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    maxLength={200}
+                    className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="text-sm font-medium text-emerald-50">
+                  Phone <span className="text-emerald-100/60">(optional)</span>
+                </span>
+                <input
+                  name="phone"
+                  type="tel"
+                  maxLength={40}
+                  className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2 sm:max-w-xs"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-emerald-50">
+                  Anything we should know?{" "}
+                  <span className="text-emerald-100/60">(optional)</span>
+                </span>
+                <textarea
+                  name="message"
+                  rows={3}
+                  maxLength={2000}
+                  placeholder="Condition notes, what you're after, best time to reach you…"
+                  className="mt-1 w-full rounded-md border-0 bg-white px-3 py-2.5 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
+                />
+              </label>
 
-          <PhotoInput photos={photos} onChange={onPhotos} />
+              <PhotoInput photos={photos} onChange={onPhotos} />
+            </>
+          )}
 
           {/* The deal, laid out across the counter */}
           <div className="border-t border-emerald-200/20 pt-5">

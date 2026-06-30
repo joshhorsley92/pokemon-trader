@@ -73,8 +73,8 @@ const FIELDS: {
   },
   {
     key: "inventory_market_markup",
-    label: "Inventory market markup",
-    help: "Multiplier on market price for inventory items without a fixed asking price. 1.0 = sell at market.",
+    label: "Inventory market markup (multiplier)",
+    help: 'Multiplier on market price for inventory without a fixed asking price — 1.0 = market, 1.25 = market +25%. SAME setting as the Inventory tab\'s "market + %" control (that one takes a percent; this takes the raw multiplier).',
     type: "number",
     step: "0.05",
   },

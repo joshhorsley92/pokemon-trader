@@ -45,3 +45,6 @@ next-env.d.ts
 
 # Netlify edge-function bundling artifact
 deno.lock
+
+# Local reference material
+pc.html

@@ -1,8 +1,12 @@
 [build]
+  # Migrations run first so a deploy that adds a table can't ship before the
+  # schema exists. drizzle-kit skips already-applied migrations, so this is a
+  # no-op on deploys that don't change the schema.
+  #
   # Webpack, not the default Turbopack: Netlify's edge bundler can't load
   # Turbopack's chunked middleware output (ChunkLoadError on [externals] chunks
   # when packaging proxy.ts as an edge function).
-  command = "npx next build --webpack"
+  command = "npx drizzle-kit migrate && npx next build --webpack"
 
 # Netlify's Next.js runtime handles the App Router, server components, and
 # server actions. Pinned here so the build doesn't depend on auto-detection.

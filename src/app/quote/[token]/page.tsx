@@ -128,7 +128,7 @@ export default async function QuoteStatusPage({
               You&apos;re trading in
             </p>
             <ul className="mt-2 space-y-1">
-              {tradeInItems.map((item) => {
+              {tradeInItems.filter((i) => !i.bulk).map((item) => {
                 const unit =
                   useCounter && item.counterUnitCredit !== null
                     ? Number(item.counterUnitCredit)
@@ -152,6 +152,20 @@ export default async function QuoteStatusPage({
                   </li>
                 );
               })}
+              {submission.bulkCount > 0 && (
+                <li className="flex justify-between gap-2">
+                  <span className="min-w-0 flex-1 break-words leading-snug">
+                    Bulk cards × {submission.bulkCount.toLocaleString("en-US")}
+                    <span className="block text-[11px] text-neutral-400">
+                      ${Number(submission.bulkRatePerThousand ?? 0).toFixed(2)}{" "}
+                      per 1,000 · below our minimum
+                    </span>
+                  </span>
+                  <span className="whitespace-nowrap tabular-nums">
+                    {money(submission.bulkTotal)}
+                  </span>
+                </li>
+              )}
             </ul>
             <div className="mt-2 flex items-baseline justify-between border-t border-neutral-200 pt-2">
               <span className="text-xs uppercase text-neutral-500">

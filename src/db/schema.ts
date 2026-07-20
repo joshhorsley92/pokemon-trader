@@ -361,6 +361,17 @@ export const submissions = pgTable("submissions", {
   counterTotal: numeric("counter_total", { precision: 10, scale: 2 }),
   // Customer opted to take the leftover credit as cash, valued at the cash
   // rate: leftover × (cash quote ÷ credit quote), snapshotted at submit.
+  // Bulk lot snapshot (below-floor cards from a list import). Priced per
+  // 1,000 cards, so the lot total lives here rather than on cent-precision
+  // line rows.
+  bulkCount: integer("bulk_count").notNull().default(0),
+  bulkRatePerThousand: numeric("bulk_rate_per_thousand", {
+    precision: 6,
+    scale: 2,
+  }),
+  bulkTotal: numeric("bulk_total", { precision: 10, scale: 2 })
+    .notNull()
+    .default("0"),
   takeCashRemainder: boolean("take_cash_remainder").notNull().default(false),
   remainderCashValue: numeric("remainder_cash_value", {
     precision: 10,
@@ -401,6 +412,8 @@ export const submissionTradeInItems = pgTable("submission_trade_in_items", {
   })
     .notNull()
     .default("1"),
+  // Below-floor card from a list import, paid at the flat bulk rate
+  bulk: boolean("bulk").notNull().default(false),
   quantity: integer("quantity").notNull(),
   unitMarketPrice: numeric("unit_market_price", {
     precision: 10,

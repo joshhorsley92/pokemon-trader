@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CONDITIONS, type ConditionMultipliers } from "@/lib/conditions";
 import type { AnalyzerEconomics } from "@/lib/analyzer/engine";
+import type { LowValueTier } from "@/lib/pricing";
 import { saveSettings, type SettingsState } from "./actions";
 
 type Defaults = {
@@ -17,6 +18,7 @@ type Defaults = {
   fallback_percentage: number;
   min_item_price: number;
   min_single_price: number;
+  bulk_rate_per_thousand: number;
   inventory_market_markup: number;
 };
 
@@ -68,6 +70,13 @@ const FIELDS: {
     key: "min_single_price",
     label: "Minimum single-card price ($)",
     help: "Singles below this market price are hidden from the public trade builder — keeps customers from trading in low-value bulk commons.",
+    type: "number",
+    step: "0.5",
+  },
+  {
+    key: "bulk_rate_per_thousand",
+    label: "Bulk rate ($ per 1,000 cards)",
+    help: "What list imports pay for singles below the minimum — typical range $5–10 per thousand. Customers see this as a single bulk-lot line.",
     type: "number",
     step: "0.5",
   },
@@ -153,15 +162,18 @@ export function SettingsForm({
   defaults,
   conditionMultipliers,
   analyzerEconomics,
+  lowValueTiers,
 }: {
   defaults: Defaults;
   conditionMultipliers: ConditionMultipliers;
   analyzerEconomics: AnalyzerEconomics;
+  lowValueTiers: LowValueTier[];
 }) {
   const [state, formAction, pending] = useActionState<SettingsState, FormData>(
     saveSettings,
     {},
   );
+  const [tiers, setTiers] = useState<LowValueTier[]>(lowValueTiers);
   return (
     <Card>
       <CardContent className="pt-6">
@@ -220,6 +232,108 @@ export function SettingsForm({
               </div>
             ))}
           </div>
+          <div className="space-y-3 border-t pt-4">
+            <div>
+              <p className="text-sm font-medium">Low-value payout tiers</p>
+              <p className="text-xs text-neutral-500">
+                Fixed payouts for singles below the minimum single-card price
+                — e.g. a card booking $2–2.99 pays $0.25 flat. Exact amounts:
+                condition and rounding don&apos;t apply. Singles under the
+                lowest tier are bulk-only.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="grid grid-cols-[1fr_1fr_1fr_auto] items-center gap-2 text-xs font-semibold uppercase text-neutral-500">
+                <span>Market from ($)</span>
+                <span>Market to ($)</span>
+                <span>We pay ($)</span>
+                <span className="w-16" />
+              </div>
+              {tiers.map((tier, i) => (
+                <div
+                  key={i}
+                  className="grid grid-cols-[1fr_1fr_1fr_auto] items-center gap-2"
+                >
+                  <Input
+                    name={`lvt:${i}:min`}
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={tier.min}
+                    onChange={(e) =>
+                      setTiers((prev) =>
+                        prev.map((t, j) =>
+                          j === i ? { ...t, min: Number(e.target.value) } : t,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    name={`lvt:${i}:max`}
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={tier.max}
+                    onChange={(e) =>
+                      setTiers((prev) =>
+                        prev.map((t, j) =>
+                          j === i ? { ...t, max: Number(e.target.value) } : t,
+                        ),
+                      )
+                    }
+                  />
+                  <Input
+                    name={`lvt:${i}:payout`}
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    value={tier.payout}
+                    onChange={(e) =>
+                      setTiers((prev) =>
+                        prev.map((t, j) =>
+                          j === i
+                            ? { ...t, payout: Number(e.target.value) }
+                            : t,
+                        ),
+                      )
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="w-16 text-red-600"
+                    onClick={() =>
+                      setTiers((prev) => prev.filter((_, j) => j !== i))
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setTiers((prev) => {
+                    const last = prev[prev.length - 1];
+                    const min = last ? Math.round((last.max + 0.01) * 100) / 100 : 2;
+                    return [
+                      ...prev,
+                      { min, max: min + 0.99, payout: last ? last.payout : 0.25 },
+                    ];
+                  })
+                }
+              >
+                + Add tier
+              </Button>
+              {/* Marker so the server knows tiers were submitted even if all
+                  rows were removed */}
+              <input type="hidden" name="lvt:present" value="1" />
+            </div>
+          </div>
+
           <div className="space-y-3 border-t pt-4">
             <div>
               <p className="text-sm font-medium">Buylist analyzer economics</p>

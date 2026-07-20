@@ -171,9 +171,13 @@ export async function quoteFromDb(
   // trade-in credit/cash line rounds DOWN to the dollar. (computeQuote stays
   // pure/configurable; this is the real-money chokepoint.)
   const lines = quote.lines.map((l) => {
+    // Tiered low-value payouts are exact by design ($0.25 etc.) — flooring
+    // them to whole dollars would zero them out.
+    if (l.tiered) return l;
     const unitCredit = dollarsDown(l.unitCredit);
     return { ...l, unitCredit, lineCredit: unitCredit * l.quantity };
   });
-  const total = lines.reduce((sum, l) => sum + l.lineCredit, 0);
+  const total =
+    lines.reduce((sum, l) => sum + Math.round(l.lineCredit * 100), 0) / 100;
   return { ...quote, lines, total, manualLines };
 }

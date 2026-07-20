@@ -7,14 +7,20 @@ import { CONDITIONS, defaultCondition } from "@/lib/conditions";
 import { GRADERS, GRADES } from "@/lib/grading";
 import { applyRounding, type RoundingSettings } from "@/lib/pricing";
 import { DealSlip } from "./deal-slip";
+import { ImportListDialog } from "./import-list-dialog";
 import { PhotoInput } from "./photo-input";
-import type {
-  CatalogHit,
-  HotBuyDto,
-  QuoteDto,
-  ShopItem,
-  TradeInLine,
-  WantLine,
+import {
+  bulkLotCount,
+  bulkLotTotal,
+  bulkRateLabel,
+  type BulkLot,
+  type CatalogHit,
+  type HotBuyDto,
+  type ImportResultDto,
+  type QuoteDto,
+  type ShopItem,
+  type TradeInLine,
+  type WantLine,
 } from "./types";
 
 const STEPS = [
@@ -25,6 +31,24 @@ const STEPS = [
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+/**
+ * Default printing for a fresh line: Unlimited beats 1st Edition (customers
+ * shouldn't be defaulted into the premium printing), then Normal, then the
+ * catalog's headline printing.
+ */
+function defaultPrinting(
+  printings: { subType: string }[],
+): string | null {
+  const bySubType = (needle: string) =>
+    printings.find((p) => p.subType.toLowerCase() === needle);
+  return (
+    bySubType("unlimited")?.subType ??
+    bySubType("normal")?.subType ??
+    printings[0]?.subType ??
+    null
+  );
 }
 
 export function TradeCounter({
@@ -58,6 +82,8 @@ export function TradeCounter({
     "store_credit",
   );
   const [tradeIn, setTradeIn] = useState<TradeInLine[]>([]);
+  // Below-floor cards from a list import, paid flat per card
+  const [bulkLot, setBulkLot] = useState<BulkLot | null>(null);
   // "Trade for this" deep link from /case pre-loads the wanted item
   const [wants, setWants] = useState<WantLine[]>(() => {
     const item = initialWantId
@@ -121,7 +147,7 @@ export function TradeCounter({
   function addTradeIn(product: CatalogHit) {
     const condition =
       defaultCondition(product.category) ?? defaultCondition("sealed") ?? "Perfect";
-    const printing = product.printings[0]?.subType ?? null;
+    const printing = defaultPrinting(product.printings);
     const fresh: TradeInLine = {
       product,
       quantity: 1,
@@ -147,6 +173,59 @@ export function TradeCounter({
     setTradeIn((prev) =>
       prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)),
     );
+  }
+
+  /** Merge a priced list import into the counter + bulk lot. */
+  function applyImport(result: ImportResultDto) {
+    setTradeIn((prev) => {
+      const next = [...prev];
+      for (const item of result.regular) {
+        const fresh: TradeInLine = {
+          product: item.product,
+          quantity: item.quantity,
+          condition: item.condition,
+          printing: item.printing ?? defaultPrinting(item.product.printings),
+          graded: false,
+          grader: null,
+          grade: null,
+        };
+        const id = lineIdentity(fresh);
+        const existing = next.find((l) => lineIdentity(l) === id);
+        if (existing) {
+          existing.quantity = Math.min(existing.quantity + item.quantity, 99);
+        } else {
+          next.push(fresh);
+        }
+      }
+      return next;
+    });
+    if (result.bulk.cards.length > 0) {
+      setBulkLot((prev) => {
+        const byId = new Map(
+          (prev?.cards ?? []).map((c) => [c.productId, { ...c }]),
+        );
+        for (const card of result.bulk.cards) {
+          const existing = byId.get(card.productId);
+          if (existing) {
+            existing.quantity += card.quantity;
+          } else {
+            byId.set(card.productId, { ...card });
+          }
+        }
+        return {
+          cards: [...byId.values()],
+          ratePerThousand: result.bulk.ratePerThousand,
+        };
+      });
+    }
+  }
+
+  function removeBulkCard(productId: number) {
+    setBulkLot((prev) => {
+      if (!prev) return prev;
+      const cards = prev.cards.filter((c) => c.productId !== productId);
+      return cards.length === 0 ? null : { ...prev, cards };
+    });
   }
 
   function setTradeInQty(idx: number, quantity: number) {
@@ -262,6 +341,11 @@ export function TradeCounter({
             inventoryItemId: w.item.id,
             quantity: w.quantity,
           })),
+          bulkItems:
+            bulkLot?.cards.map((c) => ({
+              productId: c.productId,
+              quantity: c.quantity,
+            })) ?? [],
           takeCashRemainder: rateType === "store_credit" && cashRemainder,
           photos,
           website: form.get("website") ?? "",
@@ -337,6 +421,7 @@ export function TradeCounter({
         {step === 1 && (
           <StepTradeIn
             tradeIn={tradeIn}
+            bulkLot={bulkLot}
             quote={quote}
             rateType={rateType}
             popularPicks={popularPicks}
@@ -346,6 +431,9 @@ export function TradeCounter({
             onQty={setTradeInQty}
             onLine={setLineAt}
             onGraded={setTradeInGraded}
+            onImport={applyImport}
+            onBulkRemove={removeBulkCard}
+            onBulkClear={() => setBulkLot(null)}
             onNext={() => setStep(2)}
             booth={!!booth}
           />
@@ -363,6 +451,7 @@ export function TradeCounter({
         {step === 3 && (
           <StepShake
             tradeIn={tradeIn}
+            bulkLot={bulkLot}
             wants={wants}
             quote={quote}
             rateType={rateType}
@@ -416,6 +505,7 @@ export function TradeCounter({
             <DealSlip
               shopName={shopName}
               tradeIn={tradeIn}
+              bulkLot={bulkLot}
               wants={wants}
               quote={quote}
               quoteLoading={quoteLoading}
@@ -436,6 +526,7 @@ export function TradeCounter({
 
 function StepTradeIn({
   tradeIn,
+  bulkLot,
   quote,
   rateType,
   popularPicks,
@@ -445,10 +536,14 @@ function StepTradeIn({
   onQty,
   onLine,
   onGraded,
+  onImport,
+  onBulkRemove,
+  onBulkClear,
   onNext,
   booth = false,
 }: {
   tradeIn: TradeInLine[];
+  bulkLot: BulkLot | null;
   quote: QuoteDto | null;
   rateType: "store_credit" | "cash";
   popularPicks: CatalogHit[];
@@ -458,9 +553,13 @@ function StepTradeIn({
   onQty: (idx: number, qty: number) => void;
   onLine: (idx: number, patch: Partial<TradeInLine>) => void;
   onGraded: (idx: number, graded: boolean) => void;
+  onImport: (result: ImportResultDto) => void;
+  onBulkRemove: (productId: number) => void;
+  onBulkClear: () => void;
   onNext: () => void;
   booth?: boolean;
 }) {
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<CatalogHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -538,12 +637,13 @@ function StepTradeIn({
           placeholder="Try “Charizard ex Obsidian Flames” or “Phantasmal Flames ETB”…"
           className="w-full min-w-0 flex-1 rounded-md border-0 bg-white px-4 py-3 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
         />
+        {!booth && <ImportListDialog onImport={onImport} />}
         <button
           type="button"
           onClick={onNext}
-          disabled={tradeIn.length === 0}
+          disabled={tradeIn.length === 0 && bulkLotCount(bulkLot) === 0}
           title={
-            tradeIn.length === 0
+            tradeIn.length === 0 && bulkLotCount(bulkLot) === 0
               ? "Put something on the counter first"
               : undefined
           }
@@ -613,17 +713,8 @@ function StepTradeIn({
                       </span>
                     )}
                   </span>
-                  {hit.marketPrice !== null && (
-                    <span
-                      className={`shrink-0 text-xs ${
-                        below
-                          ? "font-medium text-neutral-400 line-through"
-                          : "price-tag"
-                      }`}
-                    >
-                      {money(hit.marketPrice)}
-                    </span>
-                  )}
+                  {/* No market price here — the first number a customer sees
+                      should be our offer, not what the card books for. */}
                 </button>
               </li>
             );
@@ -744,11 +835,7 @@ function StepTradeIn({
                         )}
                       </span>
                     </span>
-                    {pick.marketPrice !== null && (
-                      <span className="price-tag shrink-0 text-xs">
-                        {money(pick.marketPrice)}
-                      </span>
-                    )}
+                    {/* Market price intentionally not shown — see search hits */}
                   </button>
                 </li>
               );
@@ -776,18 +863,36 @@ function StepTradeIn({
                 "rounded border border-neutral-400/60 bg-white px-2 py-1 text-xs text-[var(--ink)]";
               return (
                 <div key={idx} className="flex items-end gap-3 sm:gap-4">
-                  <div className="standing-item shrink-0">
-                    {line.product.imageUrl ? (
-                      <Image
-                        src={line.product.imageUrl}
-                        alt=""
-                        width={80}
-                        height={80}
-                        className="h-20 w-20 object-contain drop-shadow-[0_5px_4px_rgba(0,0,0,0.35)]"
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="h-20 w-20 rounded bg-emerald-950/40" />
+                  <div className="shrink-0 text-center">
+                    <div className="standing-item">
+                      {line.product.imageUrl ? (
+                        <Image
+                          src={line.product.imageUrl}
+                          alt=""
+                          width={80}
+                          height={80}
+                          className="h-20 w-20 object-contain drop-shadow-[0_5px_4px_rgba(0,0,0,0.35)]"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="h-20 w-20 rounded bg-emerald-950/40" />
+                      )}
+                    </div>
+                    {/* Card identity under the pic — makes a wrong import
+                        match obvious at a glance */}
+                    {(line.product.cardNumber || line.printing) && (
+                      <p className="mt-2 w-20 font-slip text-[10px] leading-tight text-emerald-100/80">
+                        {line.product.cardNumber && (
+                          <span className="block">
+                            {line.product.cardNumber}
+                          </span>
+                        )}
+                        {line.printing && (
+                          <span className="block text-emerald-100/60">
+                            {line.printing}
+                          </span>
+                        )}
+                      </p>
                     )}
                   </div>
                   <div
@@ -799,6 +904,9 @@ function StepTradeIn({
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold leading-snug text-[var(--ink)]">
                           {line.product.name}
+                        </p>
+                        <p className="text-[11px] leading-snug text-neutral-500">
+                          {line.product.groupName}
                         </p>
                         <p className="mt-0.5 font-slip text-xs text-neutral-600">
                           {line.graded ? (
@@ -843,10 +951,11 @@ function StepTradeIn({
                           }
                           className={selectClass}
                         >
+                          {/* Printing names only — market prices stay hidden
+                              so the offer is the first number they see */}
                           {printings.map((p) => (
                             <option key={p.subType} value={p.subType}>
                               {p.subType}
-                              {p.market !== null ? ` — ${money(p.market)}` : ""}
                             </option>
                           ))}
                         </select>
@@ -931,6 +1040,74 @@ function StepTradeIn({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {bulkLot && bulkLot.cards.length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-100/80">
+            Bulk lot
+            <span className="ml-2 font-normal normal-case tracking-normal text-emerald-100/60">
+              cards below our minimum — {bulkRateLabel(bulkLot.ratePerThousand)}{" "}
+              cards, flat
+            </span>
+          </h3>
+          <div className="counter-mat mt-2 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-slip text-sm text-emerald-50">
+                {bulkLotCount(bulkLot)} card
+                {bulkLotCount(bulkLot) === 1 ? "" : "s"} ·{" "}
+                <span className="font-semibold">
+                  {money(bulkLotTotal(bulkLot))}
+                </span>
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkOpen((o) => !o)}
+                  className="rounded border border-emerald-200/40 px-2.5 py-1 text-xs font-medium text-emerald-100/90 hover:text-white"
+                  aria-expanded={bulkOpen}
+                >
+                  {bulkOpen ? "Hide cards −" : "See cards +"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onBulkClear}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-red-300 hover:text-red-200"
+                >
+                  Remove all
+                </button>
+              </div>
+            </div>
+            {bulkOpen && (
+              <ul className="mt-3 max-h-56 space-y-1 overflow-y-auto border-t border-emerald-200/20 pt-2">
+                {bulkLot.cards.map((card) => (
+                  <li
+                    key={card.productId}
+                    className="flex items-center justify-between gap-2 text-xs text-emerald-100/80"
+                  >
+                    <span className="min-w-0 flex-1 truncate">
+                      {card.quantity}× {card.name}
+                      {card.setName && (
+                        <span className="text-emerald-100/50">
+                          {" "}
+                          · {card.setName}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onBulkRemove(card.productId)}
+                      aria-label={`Remove ${card.name}`}
+                      className="shrink-0 rounded px-1.5 text-red-300 hover:text-red-200"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       )}
@@ -1137,6 +1314,7 @@ function SynopsisItem({
 
 function StepShake({
   tradeIn,
+  bulkLot,
   wants,
   quote,
   rateType,
@@ -1151,6 +1329,7 @@ function StepShake({
   booth = false,
 }: {
   tradeIn: TradeInLine[];
+  bulkLot: BulkLot | null;
   wants: WantLine[];
   quote: QuoteDto | null;
   rateType: "store_credit" | "cash";
@@ -1165,16 +1344,19 @@ function StepShake({
   /** Booth flow: skip the contact form, name optional, "send to counter" */
   booth?: boolean;
 }) {
-  const tradeInCount = tradeIn.length;
-  const credit = quote?.total ?? 0;
+  const bulkCount = bulkLotCount(bulkLot);
+  const bulkTotal = bulkLotTotal(bulkLot);
+  const tradeInCount = tradeIn.length + (bulkCount > 0 ? 1 : 0);
+  const credit = (quote?.total ?? 0) + bulkTotal;
   const wantsTotal =
     wants.reduce(
       (sum, w) => sum + Math.round(w.item.price * 100) * w.quantity,
       0,
     ) / 100;
   const balance = Math.round((credit - wantsTotal) * 100) / 100;
-  const creditTotal = quote?.totals?.store_credit ?? credit;
-  const cashTotal = quote?.totals?.cash ?? 0;
+  // Bulk value is flat per card, identical for credit vs cash
+  const creditTotal = (quote?.totals?.store_credit ?? (quote?.total ?? 0)) + bulkTotal;
+  const cashTotal = (quote?.totals?.cash ?? 0) + bulkTotal;
   const remainderCash =
     creditTotal > 0
       ? applyRounding((cashTotal * balance) / creditTotal, rounding)
@@ -1349,6 +1531,14 @@ function StepShake({
                     />
                   );
                 })}
+                {bulkCount > 0 && bulkLot && (
+                  <SynopsisItem
+                    image={null}
+                    name={`Bulk cards × ${bulkCount.toLocaleString("en-US")}`}
+                    detail={`${bulkRateLabel(bulkLot.ratePerThousand)} · below our minimum`}
+                    amount={money(bulkTotal)}
+                  />
+                )}
                 <div className="flex items-baseline justify-between border-t border-neutral-100 pt-2">
                   <span className="text-[11px] font-semibold uppercase text-neutral-400">
                     {rateType === "store_credit" ? "Trade credit" : "Cash offer"}

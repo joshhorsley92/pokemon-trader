@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, tables } from "@/db";
+import { projectSubmissionValue } from "@/lib/analyzer/projected";
 import { isQuoteExpired } from "@/lib/expiry";
+import { getSettings } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -71,6 +73,39 @@ export default async function SubmissionDetailPage({
   const currentById = new Map(currentPrices.map((p) => [p.id, p.marketPrice]));
 
   const expired = isQuoteExpired(submission.status, submission.quoteExpiresAt);
+
+  // Bulk lot rows are shown grouped, not as quote lines
+  const quotedItems = tradeInItems.filter((i) => !i.bulk);
+  const bulkItems = tradeInItems.filter((i) => i.bulk);
+
+  // Projected resale value (internal): analyzer pass over the trade-in
+  const settings = await getSettings(shopId);
+  const projected = await projectSubmissionValue(
+    quotedItems.map((i) => ({
+      productId: i.productId,
+      productName: i.productName,
+      quantity: i.quantity,
+      condition: i.condition,
+      printing: i.printing,
+      graded: i.graded,
+    })),
+    settings,
+  ).catch(() => null);
+  const payout = Number(submission.counterTotal ?? submission.tradeInTotal);
+  // Bulk resale projected at the internal analyzer bulk rate
+  const bulkResale =
+    Math.round(
+      submission.bulkCount *
+        settings.analyzer_economics.bulk_rate_per_card *
+        100,
+    ) / 100;
+  const projectedRevenue =
+    projected === null && submission.bulkCount === 0
+      ? null
+      : Math.round(((projected?.projectedRevenue ?? 0) + bulkResale) * 100) /
+        100;
+  const margin =
+    projectedRevenue === null ? null : Math.round((projectedRevenue - payout) * 100) / 100;
 
   return (
     <div className="space-y-6">
@@ -184,7 +219,7 @@ export default async function SubmissionDetailPage({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tradeInItems.map((item) => {
+              {quotedItems.map((item) => {
                 const nowRaw = currentById.get(item.productId);
                 const now = nowRaw == null ? null : Number(nowRaw);
                 const then = Number(item.unitMarketPrice);
@@ -269,8 +304,138 @@ export default async function SubmissionDetailPage({
               })}
             </TableBody>
           </Table>
+
+          {submission.bulkCount > 0 && (
+            <details className="mt-4 rounded-md border bg-neutral-50 px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium">
+                Bulk lot: {submission.bulkCount.toLocaleString()} cards @ $
+                {Number(submission.bulkRatePerThousand ?? 0).toFixed(2)}/1,000 ={" "}
+                {money(submission.bulkTotal)}
+                <span className="ml-2 text-xs font-normal text-neutral-500">
+                  (below the floor — click to see the cards)
+                </span>
+              </summary>
+              <ul className="mt-2 max-h-64 space-y-0.5 overflow-y-auto text-xs text-neutral-600">
+                {bulkItems.map((item) => (
+                  <li key={item.id} className="flex justify-between gap-2">
+                    <span className="min-w-0 flex-1 truncate">
+                      {item.quantity}× {item.productName}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-neutral-400">
+                      mkt {money(item.unitMarketPrice)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </CardContent>
       </Card>
+
+      {projectedRevenue !== null && (
+        <Card className="border-emerald-200 bg-emerald-50/40">
+          <CardHeader>
+            <CardTitle className="text-base">
+              Projected value (internal)
+            </CardTitle>
+            <CardDescription>
+              What you&apos;d likely make selling this trade-in — best of
+              buylist / TCGplayer-net / bulk per card at today&apos;s prices.
+              Never shown to the customer.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-md bg-white px-3 py-2 shadow-sm">
+                <p className="text-xs uppercase text-neutral-500">
+                  Projected revenue
+                </p>
+                <p className="text-xl font-semibold tabular-nums">
+                  {money(projectedRevenue)}
+                </p>
+              </div>
+              <div className="rounded-md bg-white px-3 py-2 shadow-sm">
+                <p className="text-xs uppercase text-neutral-500">
+                  You&apos;re paying
+                </p>
+                <p className="text-xl font-semibold tabular-nums">
+                  {money(payout)}
+                  <span className="ml-1 text-xs font-normal text-neutral-400">
+                    {submission.rateType === "store_credit" ? "credit" : "cash"}
+                  </span>
+                </p>
+              </div>
+              <div
+                className={`rounded-md px-3 py-2 shadow-sm ${
+                  (margin ?? 0) >= 0 ? "bg-emerald-100" : "bg-red-100"
+                }`}
+              >
+                <p className="text-xs uppercase text-neutral-600">
+                  Projected margin
+                </p>
+                <p
+                  className={`text-xl font-semibold tabular-nums ${
+                    (margin ?? 0) >= 0 ? "text-emerald-800" : "text-red-700"
+                  }`}
+                >
+                  {margin !== null && margin < 0 ? "−" : ""}
+                  {money(Math.abs(margin ?? 0))}
+                  {payout > 0 && margin !== null && (
+                    <span className="ml-1 text-xs font-normal">
+                      ({((margin / payout) * 100).toFixed(0)}%)
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {projected && (
+              <details className="rounded-md border bg-white px-3 py-2">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Per-item plan ({projected.summary.results.length} lines
+                  {submission.bulkCount > 0 &&
+                    ` + bulk lot resale ~${money(bulkResale)}`}
+                  {projected.skippedGraded > 0 &&
+                    ` · ${projected.skippedGraded} graded excluded`}
+                  )
+                </summary>
+                <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto text-xs">
+                  {projected.summary.results.map((r, i) => {
+                    const perUnit =
+                      r.decision === "BUYLIST"
+                        ? r.netBuylist
+                        : r.decision === "TCG"
+                          ? r.netTcg
+                          : r.netBulk;
+                    return (
+                      <li
+                        key={i}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {r.item.quantity}× {r.item.name}
+                        </span>
+                        <span className="shrink-0 rounded bg-neutral-100 px-1.5 py-0.5 font-medium">
+                          {r.decision === "BUYLIST"
+                            ? `→ ${r.bestOffer?.vendor ?? "buylist"}`
+                            : r.decision === "TCG"
+                              ? "→ TCGplayer"
+                              : "→ bulk"}
+                        </span>
+                        <span className="w-20 shrink-0 text-right tabular-nums">
+                          {perUnit === null
+                            ? "—"
+                            : money(perUnit * r.item.quantity)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </details>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {tradeForItems.length > 0 && (
         <Card>
@@ -320,7 +485,7 @@ export default async function SubmissionDetailPage({
 
       <CounterOfferForm
         submissionId={submission.id}
-        lines={tradeInItems.map((item) => ({
+        lines={quotedItems.map((item) => ({
           lineId: item.id,
           productName: item.condition
             ? `${item.productName} (${item.condition})`

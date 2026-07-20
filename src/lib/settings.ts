@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, tables } from "@/db";
+import type { LowValueTier } from "@/lib/pricing";
 import {
   DEFAULT_CONDITION_MULTIPLIERS,
   type ConditionMultipliers,
@@ -26,6 +27,21 @@ export type AppSettings = {
    * low-value bulk commons on us. Sealed/other categories use min_item_price.
    */
   min_single_price: number;
+  /**
+   * What we pay customers for singles below the price floor
+   * (min_single_price) when they import a list, in dollars PER 1,000 cards
+   * (typical range $5–10). Customer-facing — distinct from
+   * analyzer_economics.bulk_rate_per_card (our internal bulk cost).
+   */
+  bulk_rate_per_thousand: number;
+  /**
+   * Fixed payouts for singles whose market price sits below the floor but
+   * above bulk territory, e.g. $2–2.99 market → $0.25 flat. Condition and
+   * rounding do NOT apply — the payout is exact. Singles below the lowest
+   * tier are bulk-only; at/above min_single_price normal percentage rules
+   * take over.
+   */
+  low_value_tiers: LowValueTier[];
   /** Markup multiplier applied to market price for inventory items without a fixed asking price, e.g. 1.0 = market */
   inventory_market_markup: number;
   /** Shop display name used on public pages and emails */
@@ -44,6 +60,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fallback_percentage: 50,
   min_item_price: 5,
   min_single_price: 10,
+  bulk_rate_per_thousand: 7,
+  low_value_tiers: [
+    { min: 2, max: 2.99, payout: 0.25 },
+    { min: 3, max: 3.99, payout: 0.5 },
+    { min: 4, max: 4.99, payout: 0.75 },
+    { min: 5, max: 6.99, payout: 1 },
+    { min: 7, max: 8.49, payout: 2 },
+    { min: 8.5, max: 9.99, payout: 3 },
+  ],
   inventory_market_markup: 1.0,
   shop_name: "Pokémon Trader",
   condition_multipliers: DEFAULT_CONDITION_MULTIPLIERS,

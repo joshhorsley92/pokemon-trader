@@ -113,8 +113,11 @@ export class CatalogIndex {
       const scored = this.score(candidates, inputName, input.setName);
       if (scored) {
         // A number match needs at least one corroborating signal unless it's
-        // unambiguous within the catalog.
-        if (scored.score > 0 || candidates.length === 1) {
+        // unambiguous within the catalog — and a provided name that shares
+        // NO tokens with the candidate vetoes it ("Butterfree 12/62" must
+        // not match Moltres just because Moltres owns 12/62).
+        const nameContradicts = inputName !== "" && scored.overlap === 0;
+        if ((scored.score > 0 || candidates.length === 1) && !nameContradicts) {
           return {
             entry: scored.entry,
             via: "number",
@@ -148,8 +151,9 @@ export class CatalogIndex {
     inputName: string,
     inputSet: string | null | undefined,
     requireNameSignal = false,
-  ): { entry: CatalogEntry; score: number } | null {
-    let best: { entry: CatalogEntry; score: number } | null = null;
+  ): { entry: CatalogEntry; score: number; overlap: number } | null {
+    let best: { entry: CatalogEntry; score: number; overlap: number } | null =
+      null;
     for (const entry of candidates) {
       let score = 0;
       let overlap = 0;
@@ -161,7 +165,7 @@ export class CatalogIndex {
         score += setNamesCompatible(inputSet, entry.setName) ? 3 : -2;
       }
       if (requireNameSignal && overlap < 0.4) continue;
-      if (!best || score > best.score) best = { entry, score };
+      if (!best || score > best.score) best = { entry, score, overlap };
     }
     return best;
   }

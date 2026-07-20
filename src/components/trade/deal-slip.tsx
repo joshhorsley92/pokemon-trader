@@ -2,7 +2,15 @@
 
 import { useState } from "react";
 import { applyRounding, type RoundingSettings } from "@/lib/pricing";
-import type { QuoteDto, TradeInLine, WantLine } from "./types";
+import {
+  bulkLotCount,
+  bulkLotTotal,
+  bulkRateLabel,
+  type BulkLot,
+  type QuoteDto,
+  type TradeInLine,
+  type WantLine,
+} from "./types";
 
 function money(n: number): string {
   return n.toLocaleString("en-US", {
@@ -59,6 +67,7 @@ function SectionToggle({
 export function DealSlip({
   shopName,
   tradeIn,
+  bulkLot,
   wants,
   quote,
   quoteLoading,
@@ -70,6 +79,7 @@ export function DealSlip({
 }: {
   shopName: string;
   tradeIn: TradeInLine[];
+  bulkLot: BulkLot | null;
   wants: WantLine[];
   quote: QuoteDto | null;
   quoteLoading: boolean;
@@ -83,15 +93,20 @@ export function DealSlip({
   const [tradeInOpen, setTradeInOpen] = useState(false);
   const [wantsOpen, setWantsOpen] = useState(false);
 
-  const credit = quote?.total ?? 0;
+  // Bulk lot value is flat per card and identical for credit vs cash
+  const bulkCount = bulkLotCount(bulkLot);
+  const bulkTotal = bulkLotTotal(bulkLot);
+
+  const credit = (quote?.total ?? 0) + bulkTotal;
   const wantsTotal =
     wants.reduce((sum, w) => sum + Math.round(w.item.price * 100) * w.quantity, 0) /
     100;
   const balance = Math.round((credit - wantsTotal) * 100) / 100;
 
-  // Leftover credit can be taken as cash, valued at the cash rate
-  const creditTotal = quote?.totals?.store_credit ?? credit;
-  const cashTotal = quote?.totals?.cash ?? 0;
+  // Leftover credit can be taken as cash, valued at the cash rate. Bulk value
+  // converts 1:1 (it's already a cash-basis flat rate).
+  const creditTotal = (quote?.totals?.store_credit ?? (quote?.total ?? 0)) + bulkTotal;
+  const cashTotal = (quote?.totals?.cash ?? 0) + bulkTotal;
   const remainderCash =
     creditTotal > 0
       ? applyRounding((cashTotal * balance) / creditTotal, rounding)
@@ -114,11 +129,11 @@ export function DealSlip({
         <div className="lg:mt-4 lg:border-t lg:border-dashed lg:border-neutral-300 lg:pt-3">
           <SectionToggle
             label="Your side of the counter"
-            count={tradeIn.length}
+            count={tradeIn.length + (bulkCount > 0 ? 1 : 0)}
             expanded={tradeInOpen}
             onToggle={() => setTradeInOpen((o) => !o)}
           />
-          {tradeIn.length === 0 ? (
+          {tradeIn.length === 0 && bulkCount === 0 ? (
             <p className="py-1 text-xs italic text-neutral-400">
               nothing on the counter yet
             </p>
@@ -164,6 +179,20 @@ export function DealSlip({
                   </li>
                 );
               })}
+              {bulkCount > 0 && bulkLot && (
+                <li className="flex justify-between gap-2">
+                  <span className="min-w-0 flex-1 break-words leading-snug">
+                    Bulk cards × {bulkCount.toLocaleString("en-US")}
+                    <span className="block text-[11px] text-neutral-400">
+                      {bulkRateLabel(bulkLot.ratePerThousand)} · below our
+                      minimum
+                    </span>
+                  </span>
+                  <span className="whitespace-nowrap tabular-nums">
+                    {money(bulkTotal)}
+                  </span>
+                </li>
+              )}
             </ul>
           )}
           <div className="mt-1.5 flex items-baseline justify-between border-t border-neutral-200 pt-1.5">

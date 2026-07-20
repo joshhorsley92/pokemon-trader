@@ -3,6 +3,7 @@ import { and, desc, ilike, isNotNull, or, sql } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { getSettings } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
+import { bulkCutoff } from "@/lib/trade-import";
 
 /**
  * Public catalog search for the trade builder.
@@ -47,11 +48,15 @@ export async function GET(request: NextRequest) {
   const effectiveCategory = sql`COALESCE(${tables.catalogProducts.categoryOverride}, ${tables.catalogProducts.category})`;
   const singlesMember = sql`${effectiveCategory} = 'singles'`;
   const sealedMember = sql`${effectiveCategory} = 'sealed'`;
+  // Singles are tradeable down to the bottom of the low-value payout ladder
+  // (fixed tier payouts fill the gap below min_single_price); only cards
+  // under the ladder are bulk-only and count as below-floor.
+  const singlesFloor = bulkCutoff(settings);
   // With includeBelow, filter only by category (price floor becomes a flag);
   // otherwise keep the floor as a hard filter.
   const singlesOk = includeBelow
     ? singlesMember
-    : sql`(${singlesMember} AND ${tables.catalogProducts.marketPrice} >= ${settings.min_single_price})`;
+    : sql`(${singlesMember} AND ${tables.catalogProducts.marketPrice} >= ${singlesFloor})`;
   const sealedOk = includeBelow
     ? sealedMember
     : sql`(${sealedMember} AND ${tables.catalogProducts.marketPrice} >= ${settings.min_item_price})`;
@@ -65,8 +70,15 @@ export async function GET(request: NextRequest) {
   // The trade-in floor that applies to each row, and whether it's under it.
   // Casts are required: bare bind params inside CASE THEN have no type for
   // Postgres to infer ("could not determine data type of parameter").
-  const floor = sql<string>`CASE WHEN ${singlesMember} THEN ${settings.min_single_price}::numeric ELSE ${settings.min_item_price}::numeric END`;
-  const belowFloor = sql<boolean>`(${tables.catalogProducts.marketPrice} < CASE WHEN ${singlesMember} THEN ${settings.min_single_price}::numeric ELSE ${settings.min_item_price}::numeric END)`;
+  const floor = sql<string>`CASE WHEN ${singlesMember} THEN ${singlesFloor}::numeric ELSE ${settings.min_item_price}::numeric END`;
+  const belowFloor = sql<boolean>`(${tables.catalogProducts.marketPrice} < CASE WHEN ${singlesMember} THEN ${singlesFloor}::numeric ELSE ${settings.min_item_price}::numeric END)`;
+
+  const cardNumber = sql<string | null>`(
+    SELECT e->>'value' FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(${tables.catalogProducts.extData}) = 'array'
+           THEN ${tables.catalogProducts.extData} ELSE '[]'::jsonb END
+    ) e WHERE e->>'name' = 'Number' LIMIT 1
+  )`;
 
   const results = await db
     .select({
@@ -76,6 +88,7 @@ export async function GET(request: NextRequest) {
       groupName: tables.catalogGroups.name,
       imageUrl: tables.catalogProducts.imageUrl,
       marketPrice: tables.catalogProducts.marketPrice,
+      cardNumber,
       category: effectiveCategory,
       printings: tables.catalogProducts.printings,
       floor,

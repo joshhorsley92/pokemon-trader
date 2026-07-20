@@ -44,6 +44,12 @@ const settings = {
   rounding_step: 0.25,
   rounding_mode: "step" as const,
   fallback_percentage: 50,
+  min_single_price: 10,
+  low_value_tiers: [
+    { min: 2, max: 2.99, payout: 0.25 },
+    { min: 3, max: 3.99, payout: 0.5 },
+    { min: 8.5, max: 9.99, payout: 3 },
+  ],
   condition_multipliers: {
     sealed: { Perfect: 1, Great: 0.9, "Rips/Dents/Tears": 0.75 },
     singles: { NM: 1, LP: 0.85 },
@@ -268,6 +274,67 @@ describe("computeQuote", () => {
     );
     // 100 × 1.10 = 110
     expect(quote.lines[0].unitCredit).toBe(110);
+  });
+
+  it("pays fixed tier amounts for low-value singles", () => {
+    const cheapCard: QuotableProduct = {
+      id: 777,
+      groupId: 24448,
+      name: "Cheap Single",
+      category: "singles",
+      marketPrice: 2.5,
+    };
+    const singlesRule = rule({ scope: "category", category: "singles", percentage: 70 });
+    const quote = computeQuote(
+      [
+        // $2.50 market → $0.25 tier; condition must NOT change the payout
+        { product: cheapCard, quantity: 4, condition: "LP" },
+        // $9.50 market → $3 tier
+        {
+          product: { ...cheapCard, id: 778, marketPrice: 9.5 },
+          quantity: 1,
+          condition: "NM",
+        },
+      ],
+      [singlesRule],
+      "store_credit",
+      settings,
+    );
+    expect(quote.lines[0].tiered).toBe(true);
+    expect(quote.lines[0].unitCredit).toBe(0.25);
+    expect(quote.lines[0].lineCredit).toBe(1.0);
+    expect(quote.lines[1].unitCredit).toBe(3);
+    expect(quote.total).toBe(4.0);
+  });
+
+  it("does not tier singles in gaps or above the floor, nor sealed", () => {
+    const gapCard: QuotableProduct = {
+      id: 779,
+      groupId: 1,
+      name: "Gap Card",
+      category: "singles",
+      marketPrice: 5.5, // no tier covers 4.00–8.49 in this fixture
+    };
+    const richCard: QuotableProduct = { ...gapCard, id: 780, marketPrice: 12 };
+    const singlesRule = rule({ scope: "category", category: "singles", percentage: 70 });
+    const quote = computeQuote(
+      [
+        { product: gapCard, quantity: 1, condition: "NM" },
+        { product: richCard, quantity: 1, condition: "NM" },
+        { product: etb, quantity: 1, condition: "Perfect" },
+      ],
+      [singlesRule, rule({ scope: "category", category: "sealed", percentage: 85 })],
+      "store_credit",
+      settings,
+    );
+    // Gap: falls through to the percentage path (5.50 × 0.70 = 3.85 → 3.75)
+    expect(quote.lines[0].tiered).toBe(false);
+    expect(quote.lines[0].unitCredit).toBe(3.75);
+    // Above floor: normal percentage (12 × 0.70 = 8.40 → 8.25)
+    expect(quote.lines[1].tiered).toBe(false);
+    expect(quote.lines[1].unitCredit).toBe(8.25);
+    // Sealed never tiers
+    expect(quote.lines[2].tiered).toBe(false);
   });
 
   it("treats unknown or missing conditions as full value", () => {

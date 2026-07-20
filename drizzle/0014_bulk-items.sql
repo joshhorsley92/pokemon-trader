@@ -1,0 +1,1 @@
+ALTER TABLE "submission_trade_in_items" ADD COLUMN "bulk" boolean DEFAULT false NOT NULL;

@@ -138,6 +138,20 @@ describe("CatalogIndex", () => {
     expect(m.via).toBe("name");
   });
 
+  it("a contradicting name vetoes an unambiguous number match", () => {
+    // 199/165 belongs to Charizard ex only — but the customer typed a name
+    // that shares no tokens with it, so the number must not win.
+    const m = idx.match({ name: "Iono", cardNumber: "199/165" });
+    expect(m?.entry.id).not.toBe(1);
+    expect(m?.entry.id).toBe(2); // falls through to name search
+  });
+
+  it("number-only inputs still use unambiguous number matches", () => {
+    const m = idx.match({ cardNumber: "199/165" })!;
+    expect(m.entry.id).toBe(1);
+    expect(m.via).toBe("number");
+  });
+
   it("matches sealed only when allowed (customer lists, not vendor sync)", () => {
     const input = { name: "Charizard ex Premium Collection" };
     const allowed = idx.match(input, { allowSealed: true })!;

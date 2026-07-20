@@ -24,10 +24,12 @@ export default async function SettingsPage() {
           fallback_percentage: settings.fallback_percentage,
           min_item_price: settings.min_item_price,
           min_single_price: settings.min_single_price,
+          bulk_rate_per_thousand: settings.bulk_rate_per_thousand,
           inventory_market_markup: settings.inventory_market_markup,
         }}
         conditionMultipliers={settings.condition_multipliers}
         analyzerEconomics={settings.analyzer_economics}
+        lowValueTiers={settings.low_value_tiers}
       />
     </div>
   );

@@ -27,6 +27,7 @@ const settingsSchema = z.object({
   fallback_percentage: z.coerce.number().min(0).max(200),
   min_item_price: z.coerce.number().min(0).max(10_000),
   min_single_price: z.coerce.number().min(0).max(10_000),
+  bulk_rate_per_thousand: z.coerce.number().min(0).max(1000),
   inventory_market_markup: z.coerce.number().min(0.1).max(5),
 });
 
@@ -65,10 +66,46 @@ export async function saveSettings(
     fallback_percentage: formData.get("fallback_percentage"),
     min_item_price: formData.get("min_item_price"),
     min_single_price: formData.get("min_single_price"),
+    bulk_rate_per_thousand: formData.get("bulk_rate_per_thousand"),
     inventory_market_markup: formData.get("inventory_market_markup"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid settings" };
+  }
+
+  // Low-value payout tiers: fields named lvt:<index>:min|max|payout.
+  // The lvt:present marker distinguishes "no tiers submitted" (older form)
+  // from "all tiers deliberately removed".
+  let lowValueTiers: { min: number; max: number; payout: number }[] | null =
+    null;
+  if (formData.get("lvt:present") === "1") {
+    const byIndex = new Map<
+      number,
+      { min?: number; max?: number; payout?: number }
+    >();
+    for (const [name, raw] of formData.entries()) {
+      const match = /^lvt:(\d+):(min|max|payout)$/.exec(name);
+      if (!match) continue;
+      const idx = Number(match[1]);
+      const value = z.coerce.number().min(0).max(100_000).safeParse(raw);
+      if (!value.success) {
+        return { error: "Invalid tier value" };
+      }
+      const row = byIndex.get(idx) ?? {};
+      row[match[2] as "min" | "max" | "payout"] = value.data;
+      byIndex.set(idx, row);
+    }
+    lowValueTiers = [...byIndex.values()]
+      .filter(
+        (r): r is { min: number; max: number; payout: number } =>
+          r.min !== undefined && r.max !== undefined && r.payout !== undefined,
+      )
+      .sort((a, b) => a.min - b.min);
+    for (const tier of lowValueTiers) {
+      if (tier.max < tier.min) {
+        return { error: "A tier's 'to' price is below its 'from' price" };
+      }
+    }
   }
 
   // Condition multiplier fields are named cm:<category>:<condition>
@@ -109,6 +146,9 @@ export async function saveSettings(
   }
   if (sawEconomics) {
     await setSetting(shopId, "analyzer_economics", economics);
+  }
+  if (lowValueTiers !== null) {
+    await setSetting(shopId, "low_value_tiers", lowValueTiers);
   }
   revalidatePath("/admin/settings");
   revalidatePath("/");

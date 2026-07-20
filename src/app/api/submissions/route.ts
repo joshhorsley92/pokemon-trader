@@ -10,6 +10,7 @@ import { quoteFromDb } from "@/lib/quote";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getSettings } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
+import { validateBulkItems } from "@/lib/trade-import";
 
 const submissionSchema = z.object({
   customerName: z.string().min(1).max(120),
@@ -29,7 +30,6 @@ const submissionSchema = z.object({
         grade: z.string().max(20).nullish(),
       }),
     )
-    .min(1)
     .max(50),
   tradeForItems: z
     .array(
@@ -39,6 +39,17 @@ const submissionSchema = z.object({
       }),
     )
     .max(50),
+  // Below-floor cards from a list import, paid at the flat bulk rate
+  bulkItems: z
+    .array(
+      z.object({
+        productId: z.number().int().positive(),
+        quantity: z.number().int().min(1).max(999),
+      }),
+    )
+    .max(2000)
+    .optional()
+    .default([]),
   takeCashRemainder: z.boolean().optional().default(false),
   // Compressed JPEG data URLs from the client (≤3, each ≤600KB decoded)
   photos: z
@@ -94,16 +105,30 @@ export async function POST(request: NextRequest) {
 
   const settings = await getSettings(shopId);
 
+  if (data.tradeInItems.length === 0 && data.bulkItems.length === 0) {
+    return NextResponse.json(
+      { error: "Nothing on the counter to submit." },
+      { status: 400 },
+    );
+  }
+
   // Server-side re-quote: never trust client totals.
   let quote;
+  let bulkRows: Awaited<ReturnType<typeof validateBulkItems>>;
   try {
     quote = await quoteFromDb(data.tradeInItems, data.rateType, settings, shopId);
+    bulkRows = await validateBulkItems(data.bulkItems, settings);
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Could not price items" },
       { status: 400 },
     );
   }
+  const bulkCount = bulkRows.reduce((sum, r) => sum + r.quantity, 0);
+  const bulkTotal =
+    Math.round(((bulkCount * settings.bulk_rate_per_thousand) / 1000) * 100) /
+    100;
+  const tradeInTotal = Math.round((quote.total + bulkTotal) * 100) / 100;
 
   // Price the requested inventory items server-side too.
   const wantedIds = data.tradeForItems.map((i) => i.inventoryItemId);
@@ -170,9 +195,10 @@ export async function POST(request: NextRequest) {
     ) / 100;
 
   // Leftover credit taken as cash is valued at the cash rate:
-  // leftover × (cash quote ÷ credit quote). Recomputed here — never trusted
-  // from the client.
-  const leftover = Math.round((quote.total - tradeForTotal) * 100) / 100;
+  // leftover × (cash quote ÷ credit quote). Bulk value converts 1:1 (it's
+  // already a flat cash-basis rate). Recomputed here — never trusted from the
+  // client.
+  const leftover = Math.round((tradeInTotal - tradeForTotal) * 100) / 100;
   const takeCashRemainder =
     data.takeCashRemainder &&
     data.rateType === "store_credit" &&
@@ -186,9 +212,10 @@ export async function POST(request: NextRequest) {
       settings,
       shopId,
     );
+    const effCash = cashQuote.total + bulkTotal;
     remainderCashValue =
-      quote.total > 0
-        ? applyRounding((cashQuote.total * leftover) / quote.total, settings)
+      tradeInTotal > 0
+        ? applyRounding((effCash * leftover) / tradeInTotal, settings)
         : 0;
   }
 
@@ -208,8 +235,12 @@ export async function POST(request: NextRequest) {
         customerPhone: data.customerPhone || null,
         customerMessage: data.customerMessage || null,
         rateType: data.rateType,
-        tradeInTotal: toMoneyString(quote.total),
+        tradeInTotal: toMoneyString(tradeInTotal),
         tradeForTotal: toMoneyString(tradeForTotal),
+        bulkCount,
+        bulkRatePerThousand:
+          bulkCount > 0 ? settings.bulk_rate_per_thousand.toFixed(2) : null,
+        bulkTotal: toMoneyString(bulkTotal),
         takeCashRemainder,
         remainderCashValue:
           remainderCashValue === null
@@ -252,7 +283,25 @@ export async function POST(request: NextRequest) {
       grader: line.grader,
       grade: line.grade,
     }));
-    const allRows = [...rawRows, ...gradedRows];
+    // Below-floor bulk cards. The lot's value lives on the submission
+    // (per-1000 pricing is finer than cent-precision line rows); the rows
+    // exist so the admin can see exactly what's in the lot.
+    const bulkItemRows = bulkRows.map((row) => ({
+      submissionId: submission.id,
+      productId: row.productId,
+      productName: row.name,
+      printing: null,
+      condition: null,
+      conditionMultiplier: "1",
+      bulk: true,
+      quantity: row.quantity,
+      unitMarketPrice: toMoneyString(row.marketPrice),
+      appliedPercentage: "0",
+      appliedRuleId: null,
+      hotBuyBonus: "0",
+      unitCredit: "0",
+    }));
+    const allRows = [...rawRows, ...gradedRows, ...bulkItemRows];
     if (allRows.length > 0) {
       await tx.insert(tables.submissionTradeInItems).values(allRows);
     }
@@ -296,6 +345,11 @@ export async function POST(request: NextRequest) {
           ),
         ]
       : []),
+    ...(bulkCount > 0
+      ? [
+          `Bulk lot: ${bulkCount} below-floor cards @ $${settings.bulk_rate_per_thousand.toFixed(2)}/1,000 = $${bulkTotal.toFixed(2)}`,
+        ]
+      : []),
     ...(tradeForLines.length > 0
       ? [
           "They want:",
@@ -317,7 +371,7 @@ export async function POST(request: NextRequest) {
     shopName: settings.shop_name,
     customerName: data.customerName,
     submissionId,
-    tradeInTotal: quote.total,
+    tradeInTotal,
     tradeForTotal,
     itemSummary,
   });

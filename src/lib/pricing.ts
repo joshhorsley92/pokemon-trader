@@ -48,6 +48,8 @@ export type QuoteLine = {
   appliedRuleId: string | null;
   /** Hot-buy bonus in percentage points, already included in appliedPercentage */
   hotBuyBonus: number;
+  /** Fixed low-value ladder payout — exact amount, exempt from dollar flooring */
+  tiered: boolean;
   unitCredit: number;
   lineCredit: number;
 };
@@ -108,6 +110,28 @@ export function resolveRule(
   );
 }
 
+/** A fixed payout for singles in a market-price band below the floor. */
+export type LowValueTier = {
+  min: number;
+  max: number;
+  payout: number;
+};
+
+export function findLowValueTier(
+  marketPrice: number,
+  tiers: LowValueTier[],
+): LowValueTier | null {
+  return (
+    tiers.find((t) => marketPrice >= t.min && marketPrice <= t.max) ?? null
+  );
+}
+
+/** Lowest market price we'll pay a fixed tier payout for (below = bulk only). */
+export function lowestTierMin(tiers: LowValueTier[]): number | null {
+  if (tiers.length === 0) return null;
+  return Math.min(...tiers.map((t) => t.min));
+}
+
 /** Compute a full quote from in-memory data. Pure — unit testable. */
 export function computeQuote(
   items: {
@@ -127,6 +151,8 @@ export function computeQuote(
     | "rounding_mode"
     | "fallback_percentage"
     | "condition_multipliers"
+    | "low_value_tiers"
+    | "min_single_price"
   >,
 ): Quote {
   const lines: QuoteLine[] = items.map(
@@ -137,6 +163,41 @@ export function computeQuote(
         product.category,
         condition,
       );
+
+      // Low-value singles ladder: below the floor, fixed payouts win over
+      // percentage rules. Exact amounts — no condition multiplier, no
+      // rounding, no hot-buy bonus.
+      if (
+        product.category === "singles" &&
+        product.marketPrice < settings.min_single_price
+      ) {
+        const tier = findLowValueTier(
+          product.marketPrice,
+          settings.low_value_tiers ?? [],
+        );
+        if (tier) {
+          const unitCredit = Math.round(tier.payout * 100) / 100;
+          return {
+            productId: product.id,
+            productName: product.name,
+            printing,
+            condition: condition ?? null,
+            conditionMultiplier: 1,
+            quantity,
+            unitMarketPrice: product.marketPrice,
+            appliedPercentage:
+              product.marketPrice > 0
+                ? Math.round((unitCredit / product.marketPrice) * 10000) / 100
+                : 0,
+            appliedRuleId: null,
+            hotBuyBonus: 0,
+            tiered: true,
+            unitCredit,
+            lineCredit: (Math.round(unitCredit * 100) * quantity) / 100,
+          };
+        }
+      }
+
       let unitCredit: number;
       let percentage: number;
       if (rule?.flatAmount != null) {
@@ -169,6 +230,7 @@ export function computeQuote(
         appliedPercentage: percentage,
         appliedRuleId: rule?.id ?? null,
         hotBuyBonus,
+        tiered: false,
         unitCredit,
         lineCredit: lineCreditCents / 100,
       };

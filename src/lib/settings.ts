@@ -6,6 +6,10 @@ import {
   type ConditionMultipliers,
 } from "@/lib/conditions";
 import {
+  DEFAULT_CONDITION_CURVE,
+  type ConditionCurve,
+} from "@/lib/condition-curve";
+import {
   DEFAULT_ANALYZER_ECONOMICS,
   type AnalyzerEconomics,
 } from "@/lib/analyzer/engine";
@@ -46,8 +50,16 @@ export type AppSettings = {
   inventory_market_markup: number;
   /** Shop display name used on public pages and emails */
   shop_name: string;
-  /** Credit multiplier per category+condition, e.g. sealed.Great = 0.9 */
+  /**
+   * Credit multiplier per category+condition, e.g. sealed.Great = 0.9.
+   * Singles no longer read this — see condition_curve.
+   */
   condition_multipliers: ConditionMultipliers;
+  /**
+   * Age- and value-bucketed condition ladder for SINGLES. Replaces the flat
+   * singles entry in condition_multipliers, which overpaid vintage badly.
+   */
+  condition_curve: ConditionCurve;
   /** Fee/shipping/threshold knobs for the internal buylist analyzer */
   analyzer_economics: AnalyzerEconomics;
 };
@@ -70,8 +82,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     { min: 8.5, max: 9.99, payout: 3 },
   ],
   inventory_market_markup: 1.0,
-  shop_name: "Pokémon Trader",
+  shop_name: "RareFind TCG Trader",
   condition_multipliers: DEFAULT_CONDITION_MULTIPLIERS,
+  condition_curve: DEFAULT_CONDITION_CURVE,
   analyzer_economics: DEFAULT_ANALYZER_ECONOMICS,
 };
 

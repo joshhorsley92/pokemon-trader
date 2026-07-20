@@ -10,6 +10,10 @@
  * All money math is done in integer cents to avoid float drift.
  */
 import { conditionMultiplier } from "@/lib/conditions";
+import {
+  resolveSinglesMultiplier,
+  type ConditionEraKey,
+} from "@/lib/condition-curve";
 import type { AppSettings } from "@/lib/settings";
 
 export type RateType = "store_credit" | "cash";
@@ -33,6 +37,12 @@ export type QuotableProduct = {
   name: string;
   category: ProductCategory;
   marketPrice: number; // dollars
+  /**
+   * Set release year, from catalog_groups.published_on. Drives the singles
+   * condition curve. Null (unknown set / undated group) is treated as the
+   * harshest era — never assume a card is modern.
+   */
+  releaseYear?: number | null;
 };
 
 export type QuoteLine = {
@@ -42,6 +52,13 @@ export type QuoteLine = {
   printing: string | null;
   condition: string | null;
   conditionMultiplier: number;
+  /** Which era bucket set the multiplier; null for NM and non-singles. */
+  conditionEra: ConditionEraKey | null;
+  /**
+   * Off-condition singles (MP or worse) sell slowly — flag them for a human
+   * to price instead of committing money automatically.
+   */
+  requiresReview: boolean;
   quantity: number;
   unitMarketPrice: number;
   appliedPercentage: number;
@@ -151,6 +168,7 @@ export function computeQuote(
     | "rounding_mode"
     | "fallback_percentage"
     | "condition_multipliers"
+    | "condition_curve"
     | "low_value_tiers"
     | "min_single_price"
   >,
@@ -158,11 +176,26 @@ export function computeQuote(
   const lines: QuoteLine[] = items.map(
     ({ product, quantity, condition, printing = null, hotBuyBonus = 0 }) => {
       const rule = resolveRule(product, rules, rateType);
-      const multiplier = conditionMultiplier(
-        settings.condition_multipliers,
-        product.category,
-        condition,
-      );
+      // Singles use the age/value curve; sealed and graded keep the flat
+      // per-category table (packaging damage doesn't scale with set age).
+      const resolved =
+        product.category === "singles"
+          ? resolveSinglesMultiplier(
+              settings.condition_curve,
+              condition,
+              product.releaseYear ?? null,
+              product.marketPrice,
+            )
+          : {
+              multiplier: conditionMultiplier(
+                settings.condition_multipliers,
+                product.category,
+                condition,
+              ),
+              era: null,
+              requiresReview: false,
+            };
+      const multiplier = resolved.multiplier;
 
       // Low-value singles ladder: below the floor, fixed payouts win over
       // percentage rules. Exact amounts — no condition multiplier, no
@@ -183,6 +216,10 @@ export function computeQuote(
             printing,
             condition: condition ?? null,
             conditionMultiplier: 1,
+            conditionEra: null,
+            // Tier payouts are fixed and tiny, but off-condition stock is
+            // still slow to move — a human confirms it like any other.
+            requiresReview: resolved.requiresReview,
             quantity,
             unitMarketPrice: product.marketPrice,
             appliedPercentage:
@@ -225,6 +262,8 @@ export function computeQuote(
         printing,
         condition: condition ?? null,
         conditionMultiplier: multiplier,
+        conditionEra: resolved.era,
+        requiresReview: resolved.requiresReview,
         quantity,
         unitMarketPrice: product.marketPrice,
         appliedPercentage: percentage,

@@ -9,6 +9,7 @@ import {
   type PricingRule,
   type QuotableProduct,
 } from "./pricing";
+import { DEFAULT_CONDITION_CURVE } from "./condition-curve";
 
 const etb: QuotableProduct = {
   id: 654136,
@@ -41,6 +42,7 @@ function rule(partial: Partial<PricingRule>): PricingRule {
 }
 
 const settings = {
+  condition_curve: DEFAULT_CONDITION_CURVE,
   rounding_step: 0.25,
   rounding_mode: "step" as const,
   fallback_percentage: 50,

@@ -434,6 +434,10 @@ export function TradeCounter({
             onImport={applyImport}
             onBulkRemove={removeBulkCard}
             onBulkClear={() => setBulkLot(null)}
+            onClearCounter={() => {
+              setTradeIn([]);
+              setBulkLot(null);
+            }}
             onNext={() => setStep(2)}
             booth={!!booth}
           />
@@ -515,6 +519,18 @@ export function TradeCounter({
               quoteValidityDays={quoteValidityDays}
               rounding={rounding}
             />
+            {/* The next move lives right under the running total — spend
+                that credit on something from the case */}
+            {step === 1 &&
+              (tradeIn.length > 0 || bulkLotCount(bulkLot) > 0) && (
+                <button
+                  type="button"
+                  onClick={() => setStep(2)}
+                  className="mt-2 w-full rounded-md bg-[var(--tag)] px-4 py-2.5 font-display text-base font-bold text-[var(--ink)] shadow-lg transition-transform hover:-translate-y-0.5"
+                >
+                  Browse our case →
+                </button>
+              )}
           </div>
         </div>
       </aside>
@@ -539,6 +555,7 @@ function StepTradeIn({
   onImport,
   onBulkRemove,
   onBulkClear,
+  onClearCounter,
   onNext,
   booth = false,
 }: {
@@ -556,10 +573,19 @@ function StepTradeIn({
   onImport: (result: ImportResultDto) => void;
   onBulkRemove: (productId: number) => void;
   onBulkClear: () => void;
+  onClearCounter: () => void;
   onNext: () => void;
   booth?: boolean;
 }) {
   const [bulkOpen, setBulkOpen] = useState(false);
+  // Showcase strips collapse to a single row so they don't bury the counter
+  const [hotBuysOpen, setHotBuysOpen] = useState(false);
+  const [picksOpen, setPicksOpen] = useState(false);
+  const SHOWCASE_COLLAPSED = 2;
+  const shownHotBuys = hotBuysOpen ? hotBuys : hotBuys.slice(0, SHOWCASE_COLLAPSED);
+  const shownPicks = picksOpen
+    ? popularPicks
+    : popularPicks.slice(0, SHOWCASE_COLLAPSED);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<CatalogHit[]>([]);
   const [searching, setSearching] = useState(false);
@@ -638,19 +664,6 @@ function StepTradeIn({
           className="w-full min-w-0 flex-1 rounded-md border-0 bg-white px-4 py-3 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
         />
         {!booth && <ImportListDialog onImport={onImport} />}
-        <button
-          type="button"
-          onClick={onNext}
-          disabled={tradeIn.length === 0 && bulkLotCount(bulkLot) === 0}
-          title={
-            tradeIn.length === 0 && bulkLotCount(bulkLot) === 0
-              ? "Put something on the counter first"
-              : undefined
-          }
-          className="shrink-0 rounded-md bg-[var(--manila)] px-5 py-3 font-display text-base font-semibold text-[var(--ink)] shadow transition-transform hover:-translate-y-0.5 disabled:opacity-40 disabled:hover:translate-y-0"
-        >
-          Browse our case →
-        </button>
       </div>
 
       {searching && (
@@ -731,7 +744,7 @@ function StepTradeIn({
             </span>
           </h3>
           <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            {hotBuys.map((hb) => {
+            {shownHotBuys.map((hb) => {
               const onCounter = tradeIn
                 .filter((l) => l.product.id === hb.productId)
                 .reduce((sum, l) => sum + l.quantity, 0);
@@ -751,7 +764,9 @@ function StepTradeIn({
                         printings: hb.printings,
                       })
                     }
-                    className="flex w-full items-center gap-3 rounded-md bg-white/95 p-2 text-left shadow ring-1 ring-orange-400/60 transition-transform hover:-translate-y-0.5"
+                    /* Fixed height + clamped text so tiles line up in the grid
+                       no matter how long a card or set name runs. */
+                    className="flex h-[68px] w-full items-center gap-3 overflow-hidden rounded-md bg-white/95 p-2 text-left shadow ring-1 ring-orange-400/60 transition-transform hover:-translate-y-0.5"
                   >
                     {hb.imageUrl ? (
                       <Image
@@ -766,12 +781,11 @@ function StepTradeIn({
                       <div className="h-11 w-11 shrink-0 rounded bg-neutral-100" />
                     )}
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium leading-snug text-[var(--ink)]">
+                      <span className="line-clamp-2 text-sm font-medium leading-snug text-[var(--ink)]">
                         {hb.name}
                       </span>
-                      <span className="block text-xs text-neutral-500">
+                      <span className="block truncate text-xs text-neutral-500">
                         {hb.groupName}
-                        {hb.notes && <span className="italic"> · {hb.notes}</span>}
                         {onCounter > 0 && (
                           <span className="ml-1.5 font-semibold text-emerald-700">
                             · {onCounter} on the counter
@@ -787,6 +801,18 @@ function StepTradeIn({
               );
             })}
           </ul>
+          {hotBuys.length > SHOWCASE_COLLAPSED && (
+            <button
+              type="button"
+              onClick={() => setHotBuysOpen((o) => !o)}
+              aria-expanded={hotBuysOpen}
+              className="mt-2 rounded border border-emerald-200/40 px-2.5 py-1 text-xs font-medium text-emerald-100/90 hover:text-white"
+            >
+              {hotBuysOpen
+                ? "Show fewer −"
+                : `+ ${hotBuys.length - SHOWCASE_COLLAPSED} more hot buy${hotBuys.length - SHOWCASE_COLLAPSED === 1 ? "" : "s"}`}
+            </button>
+          )}
         </div>
       )}
 
@@ -799,7 +825,7 @@ function StepTradeIn({
             </span>
           </h3>
           <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            {popularPicks.map((pick) => {
+            {shownPicks.map((pick) => {
               const onCounter = tradeIn
                 .filter((l) => l.product.id === pick.id)
                 .reduce((sum, l) => sum + l.quantity, 0);
@@ -808,7 +834,9 @@ function StepTradeIn({
                   <button
                     type="button"
                     onClick={() => onAdd(pick)}
-                    className="flex w-full items-center gap-3 rounded-md bg-white/95 p-2 text-left shadow transition-transform hover:-translate-y-0.5"
+                    /* Same fixed height as the hot-buy tiles so both grids
+                       stay on a consistent rhythm. */
+                    className="flex h-[68px] w-full items-center gap-3 overflow-hidden rounded-md bg-white/95 p-2 text-left shadow transition-transform hover:-translate-y-0.5"
                   >
                     {pick.imageUrl ? (
                       <Image
@@ -823,10 +851,10 @@ function StepTradeIn({
                       <div className="h-11 w-11 shrink-0 rounded bg-neutral-100" />
                     )}
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium leading-snug text-[var(--ink)]">
+                      <span className="line-clamp-2 text-sm font-medium leading-snug text-[var(--ink)]">
                         {pick.name}
                       </span>
-                      <span className="block text-xs text-neutral-500">
+                      <span className="block truncate text-xs text-neutral-500">
                         {pick.groupName}
                         {onCounter > 0 && (
                           <span className="ml-1.5 font-semibold text-emerald-700">
@@ -841,14 +869,39 @@ function StepTradeIn({
               );
             })}
           </ul>
+          {popularPicks.length > SHOWCASE_COLLAPSED && (
+            <button
+              type="button"
+              onClick={() => setPicksOpen((o) => !o)}
+              aria-expanded={picksOpen}
+              className="mt-2 rounded border border-emerald-200/40 px-2.5 py-1 text-xs font-medium text-emerald-100/90 hover:text-white"
+            >
+              {picksOpen
+                ? "Show fewer −"
+                : `+ ${popularPicks.length - SHOWCASE_COLLAPSED} more`}
+            </button>
+          )}
         </div>
       )}
 
       {tradeIn.length > 0 && (
         <div className="mt-6">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-100/80">
-            On the counter
-          </h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-100/80">
+              On the counter
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm("Clear everything off the counter?")) {
+                  onClearCounter();
+                }
+              }}
+              className="rounded border border-emerald-200/40 px-2.5 py-1 text-xs font-medium text-red-300 hover:border-red-300/60 hover:text-red-200"
+            >
+              Clear counter
+            </button>
+          </div>
           <div className="counter-mat mt-2 space-y-5 p-4 sm:p-5">
             {tradeIn.map((line, idx) => {
               const quoted = quote?.lines.find(
@@ -1109,6 +1162,20 @@ function StepTradeIn({
               </ul>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Bottom CTA — after they've stacked the counter, the next move is
+          picking what they want from the case */}
+      {(tradeIn.length > 0 || bulkLotCount(bulkLot) > 0) && (
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            onClick={onNext}
+            className="rounded-md bg-[var(--tag)] px-6 py-3 font-display text-lg font-bold text-[var(--ink)] shadow-lg transition-transform hover:-translate-y-0.5"
+          >
+            Browse our case →
+          </button>
         </div>
       )}
 

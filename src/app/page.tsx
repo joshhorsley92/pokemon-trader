@@ -51,7 +51,7 @@ export default async function LandingPage() {
           The trade counter is open.
         </h1>
         <p className="mt-5 max-w-xl text-lg text-emerald-100/85">
-          Bring your sealed Pokémon products to the counter, see what
+          Bring your trading cards and sealed product to the counter, see what
           they&apos;re worth in trade the moment you set them down, and walk
           away with something you actually want.
         </p>

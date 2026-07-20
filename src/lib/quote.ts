@@ -80,8 +80,15 @@ export async function quoteFromDb(
       categoryOverride: tables.catalogProducts.categoryOverride,
       marketPrice: tables.catalogProducts.marketPrice,
       printings: tables.catalogProducts.printings,
+      // Drives the singles condition curve — vintage LP is worth far less
+      // of NM than modern LP, so the set's release year is price-relevant.
+      publishedOn: tables.catalogGroups.publishedOn,
     })
     .from(tables.catalogProducts)
+    .leftJoin(
+      tables.catalogGroups,
+      eq(tables.catalogGroups.id, tables.catalogProducts.groupId),
+    )
     .where(inArray(tables.catalogProducts.id, productIds));
 
   const byId = new Map(products.map((p) => [p.id, p]));
@@ -127,6 +134,9 @@ export async function quoteFromDb(
         name: p.name,
         category: (p.categoryOverride ?? p.category) as ProductCategory,
         marketPrice: printingPrice,
+        releaseYear: p.publishedOn
+          ? new Date(p.publishedOn).getUTCFullYear()
+          : null,
       },
       quantity: item.quantity,
       condition: item.condition ?? null,

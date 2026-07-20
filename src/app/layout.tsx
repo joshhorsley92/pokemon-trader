@@ -25,7 +25,7 @@ export const metadata: Metadata = {
     template: "%s · The Trade Counter",
   },
   description:
-    "Trade in your sealed Pokémon products for store credit toward anything in our case. Build your trade, see your credit instantly, and shake on it.",
+    "Trade in your Pokémon and Magic cards and sealed products for store credit toward anything in our case. Build your trade, see your credit instantly, and shake on it.",
 };
 
 export default function RootLayout({

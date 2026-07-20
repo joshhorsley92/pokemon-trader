@@ -5,6 +5,8 @@ import {
   ProductCombobox,
   type ProductOption,
 } from "@/components/admin/product-combobox";
+import { CONDITIONS } from "@/lib/conditions";
+import { GRADERS, GRADES } from "@/lib/grading";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,6 +43,20 @@ type Item = {
   status: "available" | "reserved" | "sold" | "hidden";
 };
 
+/** Parse a stored "PSA 10" style condition back into grader + grade. */
+function parseGradedCondition(condition: string | null): {
+  grader: string;
+  grade: string;
+} {
+  if (condition) {
+    const [grader, ...rest] = condition.split(" ");
+    if ((GRADERS as readonly string[]).includes(grader)) {
+      return { grader, grade: rest.join(" ") || "10" };
+    }
+  }
+  return { grader: "PSA", grade: "10" };
+}
+
 export function ItemDialog({
   mode,
   item,
@@ -54,16 +70,54 @@ export function ItemDialog({
     action,
     {},
   );
-  const [linkedId, setLinkedId] = useState<number | null>(
-    item?.productId ?? null,
+  // Catalog-first: almost everything links to a product. Manual is the
+  // exception for oddball items the catalog doesn't carry.
+  const [manual, setManual] = useState(
+    mode === "edit" ? item?.productId == null : false,
   );
-  const [linkedOption, setLinkedOption] = useState<ProductOption | null>(null);
+  const [linkedOption, setLinkedOption] = useState<ProductOption | null>(
+    item?.productId != null
+      ? {
+          id: item.productId,
+          name: item.title,
+          groupName: "current link",
+          marketPrice: null,
+        }
+      : null,
+  );
+  const [category, setCategory] = useState<"singles" | "sealed" | "graded">(
+    item?.category ?? "sealed",
+  );
+  const [condition, setCondition] = useState<string>(item?.condition ?? "");
+  const initialGraded = parseGradedCondition(
+    item?.category === "graded" ? (item?.condition ?? null) : null,
+  );
+  const [grader, setGrader] = useState(initialGraded.grader);
+  const [grade, setGrade] = useState(initialGraded.grade);
 
   useEffect(() => {
     if (!state.success) return;
     const timer = setTimeout(() => setOpen(false), 0);
     return () => clearTimeout(timer);
   }, [state.success]);
+
+  const conditionOptions =
+    category === "sealed" ? CONDITIONS.sealed : CONDITIONS.singles;
+  const effectiveCondition =
+    category === "graded"
+      ? `${grader} ${grade}`
+      : condition || (conditionOptions[0]?.value ?? "");
+
+  function pickCategory(next: "singles" | "sealed" | "graded") {
+    setCategory(next);
+    // Reset condition to something sensible for the new scale
+    if (next !== "graded") {
+      const options = next === "sealed" ? CONDITIONS.sealed : CONDITIONS.singles;
+      setCondition((prev) =>
+        options.some((o) => o.value === prev) ? prev : (options[0]?.value ?? ""),
+      );
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -87,22 +141,65 @@ export function ItemDialog({
           <input
             type="hidden"
             name="productId"
-            value={linkedId ?? ""}
+            value={manual ? "" : (linkedOption?.id ?? "")}
           />
-          <div className="space-y-2">
-            <Label htmlFor="title">Title</Label>
-            <Input
-              id="title"
+          <input type="hidden" name="condition" value={effectiveCondition} />
+          {!manual && (
+            <input
+              type="hidden"
               name="title"
-              defaultValue={item?.title}
-              placeholder="Phantasmal Flames Elite Trainer Box"
-              required
+              value={linkedOption?.name ?? ""}
             />
+          )}
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label>{manual ? "Title" : "Product"}</Label>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-500">
+                <input
+                  type="checkbox"
+                  checked={manual}
+                  onChange={(e) => setManual(e.target.checked)}
+                />
+                Manual item (not in catalog)
+              </label>
+            </div>
+            {manual ? (
+              <Input
+                id="title"
+                name="title"
+                defaultValue={item?.title}
+                placeholder="e.g. Mystery bundle, playmat, local promo…"
+                required
+              />
+            ) : (
+              <>
+                <ProductCombobox
+                  value={linkedOption}
+                  onSelect={(opt) => {
+                    setLinkedOption(opt);
+                    if (opt?.category && opt.category !== "graded") {
+                      pickCategory(opt.category);
+                    }
+                  }}
+                  placeholder="Search the catalog…"
+                />
+                <p className="text-xs text-neutral-400">
+                  Linked items track market price automatically. Selling a
+                  graded copy? Pick the card, then set the category to Graded.
+                </p>
+              </>
+            )}
           </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Category</Label>
-              <Select name="category" defaultValue={item?.category ?? "sealed"}>
+              <Select
+                name="category"
+                value={category}
+                onValueChange={(v) => pickCategory(v as typeof category)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -151,15 +248,62 @@ export function ItemDialog({
               />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="condition">Condition (optional)</Label>
-            <Input
-              id="condition"
-              name="condition"
-              defaultValue={item?.condition ?? ""}
-              placeholder="NM, PSA 10, etc."
-            />
-          </div>
+
+          {/* Condition — scale follows the category */}
+          {category === "graded" ? (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Grader</Label>
+                <Select value={grader} onValueChange={setGrader}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {GRADERS.map((g) => (
+                      <SelectItem key={g} value={g}>
+                        {g}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Grade</Label>
+                <Select value={grade} onValueChange={setGrade}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {GRADES.map((g) => (
+                      <SelectItem key={g} value={g}>
+                        {g}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>Condition</Label>
+              <Select
+                value={condition || conditionOptions[0]?.value}
+                onValueChange={setCondition}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {conditionOptions.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="photoUrl">Photo URL (optional)</Label>
             <Input
@@ -169,39 +313,17 @@ export function ItemDialog({
               defaultValue={item?.photoUrl ?? ""}
             />
           </div>
-          <div className="space-y-2">
-            <Label>
-              Link to catalog product{" "}
-              <span className="text-xs text-neutral-400">
-                (enables automatic market pricing)
-              </span>
-            </Label>
-            {linkedId && !linkedOption ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span>Linked to product #{linkedId}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setLinkedId(null)}
-                >
-                  Unlink
-                </Button>
-              </div>
-            ) : (
-              <ProductCombobox
-                value={linkedOption}
-                onSelect={(opt) => {
-                  setLinkedOption(opt);
-                  setLinkedId(opt?.id ?? null);
-                }}
-                placeholder="Not linked — choose a product…"
-              />
-            )}
-          </div>
           {state.error && <p className="text-sm text-red-600">{state.error}</p>}
-          <Button type="submit" disabled={pending} className="w-full">
-            {pending ? "Saving…" : "Save item"}
+          <Button
+            type="submit"
+            disabled={pending || (!manual && !linkedOption)}
+            className="w-full"
+          >
+            {pending
+              ? "Saving…"
+              : !manual && !linkedOption
+                ? "Pick a product first"
+                : "Save item"}
           </Button>
         </form>
       </DialogContent>

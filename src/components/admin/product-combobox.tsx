@@ -7,6 +7,7 @@ export type ProductOption = {
   name: string;
   groupName: string;
   marketPrice: number | null;
+  category?: "singles" | "sealed" | "graded";
 };
 
 /**
@@ -17,10 +18,13 @@ export function ProductCombobox({
   value,
   onSelect,
   placeholder = "Choose a product…",
+  searchCategory = "all",
 }: {
   value: ProductOption | null;
   onSelect: (product: ProductOption | null) => void;
   placeholder?: string;
+  /** Catalog slice to search: 'all' | 'sealed' | 'singles' */
+  searchCategory?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -36,7 +40,7 @@ export function ProductCombobox({
       setLoading(true);
       try {
         const res = await fetch(
-          `/api/catalog/search?q=${encodeURIComponent(query)}`,
+          `/api/catalog/search?category=${encodeURIComponent(searchCategory)}&q=${encodeURIComponent(query)}`,
         );
         if (res.ok) setOptions((await res.json()).results);
       } finally {
@@ -44,7 +48,7 @@ export function ProductCombobox({
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [open, query]);
+  }, [open, query, searchCategory]);
 
   // Close on outside click
   useEffect(() => {

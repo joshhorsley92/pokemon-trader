@@ -25,11 +25,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # `npm install`, not `npm ci`: the lockfile is generated on Windows and
-      # omits linux-only optional deps (esbuild, @emnapi/*), which `npm ci`
-      # treats as a fatal mismatch. This job only runs a tsx script, so exact
-      # lockfile reproduction isn't required.
-      - run: npm install --no-audit --no-fund
+      # The lockfile is regenerated in a linux container (see README) so it
+      # carries linux-only optional deps (esbuild, @emnapi/*) and `npm ci`
+      # resolves cleanly on ubuntu runners.
+      - run: npm ci --no-audit --no-fund
       - name: Run sync
         env:
           DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}

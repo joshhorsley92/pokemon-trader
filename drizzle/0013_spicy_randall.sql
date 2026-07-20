@@ -1,0 +1,3 @@
+ALTER TABLE "show_transactions" ADD COLUMN "pending_id" uuid;--> statement-breakpoint
+ALTER TABLE "show_transactions" ADD CONSTRAINT "show_transactions_pending_id_show_pending_trades_id_fk" FOREIGN KEY ("pending_id") REFERENCES "public"."show_pending_trades"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_show_txn_pending" ON "show_transactions" USING btree ("pending_id");

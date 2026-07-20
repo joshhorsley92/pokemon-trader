@@ -503,11 +503,17 @@ export const showTransactions = pgTable(
       () => inventoryItems.id,
       { onDelete: "set null" },
     ),
+    // The deal (pending trade) this line settled, so past deals can be
+    // reopened as a unit. Null for one-off counter buys/sells.
+    pendingId: uuid("pending_id").references(() => showPendingTrades.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
   (t) => [
     index("idx_show_txn_session").on(t.sessionId),
     index("idx_show_txn_shop").on(t.shopId),
+    index("idx_show_txn_pending").on(t.pendingId),
   ],
 );
 
@@ -527,6 +533,13 @@ export const showPendingTrades = pgTable(
       .references(() => shops.id, { onDelete: "cascade" }),
     label: text("label"), // customer's first name, optional
     rateType: rateType("rate_type").notNull().default("store_credit"),
+    // Cash settle negotiated as part of THIS deal. Stored on the trade while
+    // it's open; recorded as ledger transactions once, when the trade closes.
+    cashToCustomer: numeric("cash_to_customer", { precision: 10, scale: 2 }),
+    cashFromCustomer: numeric("cash_from_customer", {
+      precision: 10,
+      scale: 2,
+    }),
     status: showPendingStatus("status").notNull().default("pending"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },

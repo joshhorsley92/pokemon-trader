@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local Netlify folder
+.netlify
+
+# Netlify edge-function bundling artifact
+deno.lock

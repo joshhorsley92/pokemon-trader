@@ -34,7 +34,10 @@ import {
 dns.setDefaultResultOrder("ipv4first");
 
 const connectionString =
-  process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
+  process.env.DIRECT_DATABASE_URL ??
+  process.env.NETLIFY_DATABASE_URL_UNPOOLED ??
+  process.env.DATABASE_URL ??
+  process.env.NETLIFY_DATABASE_URL;
 if (!connectionString) {
   console.error("DIRECT_DATABASE_URL or DATABASE_URL must be set");
   process.exit(1);

@@ -3,9 +3,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  useTransition,
+} from "react";
 import { CONDITIONS, defaultCondition } from "@/lib/conditions";
 import type { CatalogHit } from "@/components/trade/types";
+import type { InventoryListing } from "@/lib/inventory";
 import type {
   PendingTradeView,
   ShowTransaction,
@@ -19,10 +27,12 @@ import {
   dismissPendingPile,
   pendingCount,
   priceLine,
-  recordCashAdjustment,
+  recordInventorySale,
   recordPurchase,
   recordSale,
   removePendingLine,
+  setPileCash,
+  startOperatorTrade,
   updatePendingLine,
   voidShowTransaction,
   type LinePrices,
@@ -34,6 +44,29 @@ function money(n: number): string {
 
 type Category = "singles" | "sealed" | "graded";
 
+const TILES_KEY = "show.quickTiles";
+
+// Quick-tile preference lives in localStorage (per-device, no server round
+// trip). useSyncExternalStore keeps it hydration-safe: SSR renders "off",
+// the client corrects after mount without a mismatch warning.
+function subscribeTiles(cb: () => void) {
+  window.addEventListener("storage", cb);
+  return () => window.removeEventListener("storage", cb);
+}
+function useQuickTiles(): [boolean, () => void] {
+  const on = useSyncExternalStore(
+    subscribeTiles,
+    () => localStorage.getItem(TILES_KEY) === "1",
+    () => false,
+  );
+  function toggle() {
+    localStorage.setItem(TILES_KEY, on ? "0" : "1");
+    // storage events don't fire in the tab that wrote — nudge subscribers
+    window.dispatchEvent(new StorageEvent("storage", { key: TILES_KEY }));
+  }
+  return [on, toggle];
+}
+
 export function ShowClient({
   sessionId,
   sessionName,
@@ -42,6 +75,8 @@ export function ShowClient({
   pending,
   boothUrl,
   qrSvg,
+  inventory,
+  hotBuys,
 }: {
   sessionId: string;
   sessionName: string;
@@ -50,8 +85,18 @@ export function ShowClient({
   pending: PendingTradeView[];
   boothUrl: string | null;
   qrSvg: string | null;
+  inventory: InventoryListing[];
+  hotBuys: CatalogHit[];
 }) {
   const [selected, setSelected] = useState<CatalogHit | null>(null);
+  // Search state lives HERE (not in SearchBox) so a 12-card lot doesn't cost
+  // 12 retypes: after each buy/sell the previous query + results come back.
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<CatalogHit[]>([]);
+  const [tab, setTab] = useState<"search" | "case">("search");
+  // Quick tiles are opt-in (too many hot products for some shops) — a local,
+  // per-device preference.
+  const [tilesOn, toggleTiles] = useQuickTiles();
   const router = useRouter();
 
   // Poll for new customer-submitted piles; refresh when the count changes.
@@ -123,9 +168,19 @@ export function ShowClient({
 
       {boothUrl && qrSvg && <BoothPanel url={boothUrl} qrSvg={qrSvg} />}
 
-      <CashPanel sessionId={sessionId} />
-
       {pending.length > 0 && <PendingPiles pending={pending} />}
+
+      {/* Build a multi-card deal (their cards + yours) — same pile mechanics
+          the customer QR flow lands in. */}
+      <form action={startOperatorTrade}>
+        <input type="hidden" name="sessionId" value={sessionId} />
+        <button
+          type="submit"
+          className="w-full rounded-lg border-2 border-dashed border-emerald-300 bg-emerald-50/50 py-2.5 text-sm font-semibold text-emerald-700 hover:border-emerald-500 hover:bg-emerald-50"
+        >
+          🤝 Start a trade
+        </button>
+      </form>
 
       {selected ? (
         <EntryCard
@@ -134,7 +189,50 @@ export function ShowClient({
           onDone={() => setSelected(null)}
         />
       ) : (
-        <SearchBox onPick={setSelected} />
+        <div>
+          {/* Counter tabs: catalog search vs. one-tap sales from own stock */}
+          <div className="mb-2 flex items-center gap-1.5 text-sm">
+            <TabButton
+              active={tab === "search"}
+              onClick={() => setTab("search")}
+            >
+              Search
+            </TabButton>
+            <TabButton active={tab === "case"} onClick={() => setTab("case")}>
+              My case ({inventory.length})
+            </TabButton>
+            {tab === "search" && hotBuys.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleTiles}
+                className={`ml-auto rounded-full px-2.5 py-1 text-xs font-medium ${
+                  tilesOn
+                    ? "bg-orange-100 text-orange-700"
+                    : "text-neutral-400 hover:text-neutral-600"
+                }`}
+              >
+                🔥 Quick tiles {tilesOn ? "on" : "off"}
+              </button>
+            )}
+          </div>
+
+          {tab === "search" ? (
+            <>
+              <SearchBox
+                query={query}
+                onQuery={setQuery}
+                hits={hits}
+                onHits={setHits}
+                onPick={setSelected}
+              />
+              {tilesOn && query.trim().length < 2 && hotBuys.length > 0 && (
+                <QuickTiles hits={hotBuys} onPick={setSelected} />
+              )}
+            </>
+          ) : (
+            <MyCaseList sessionId={sessionId} inventory={inventory} />
+          )}
+        </div>
       )}
 
       {/* Recent activity */}
@@ -193,20 +291,58 @@ function Tally({
 
 // ===== Search =====
 
-function SearchBox({ onPick }: { onPick: (hit: CatalogHit) => void }) {
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<CatalogHit[]>([]);
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 font-medium ${
+        active
+          ? "bg-neutral-800 text-white"
+          : "text-neutral-500 hover:text-neutral-800"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SearchBox({
+  query,
+  onQuery,
+  hits,
+  onHits,
+  onPick,
+}: {
+  query: string;
+  onQuery: (q: string) => void;
+  hits: CatalogHit[];
+  onHits: (h: CatalogHit[]) => void;
+  onPick: (hit: CatalogHit) => void;
+}) {
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // On (re)mount — including returning from an EntryCard commit — focus and
+  // select the previous query so the operator can tap another result from the
+  // same lot, or type a new name to replace it.
   useEffect(() => {
     inputRef.current?.focus();
+    inputRef.current?.select();
   }, []);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (query.trim().length < 2) {
-        setHits([]);
+        onHits([]);
         return;
       }
       setSearching(true);
@@ -214,12 +350,13 @@ function SearchBox({ onPick }: { onPick: (hit: CatalogHit) => void }) {
         const res = await fetch(
           `/api/catalog/search?category=all&includeBelow=1&q=${encodeURIComponent(query)}`,
         );
-        if (res.ok) setHits((await res.json()).results);
+        if (res.ok) onHits((await res.json()).results);
       } finally {
         setSearching(false);
       }
     }, 250);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   return (
@@ -228,8 +365,8 @@ function SearchBox({ onPick }: { onPick: (hit: CatalogHit) => void }) {
         ref={inputRef}
         type="search"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search a card or sealed product…"
+        onChange={(e) => onQuery(e.target.value)}
+        placeholder="Search a card — try “Iono 185” or “199/165”…"
         className="w-full rounded-lg border bg-white px-4 py-3 text-base shadow-sm outline-none ring-emerald-300 focus:ring-2"
       />
       {searching && (
@@ -272,6 +409,163 @@ function SearchBox({ onPick }: { onPick: (hit: CatalogHit) => void }) {
               </button>
             </li>
           ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ===== Quick tiles (opt-in): hot buys as one-tap entries =====
+
+function QuickTiles({
+  hits,
+  onPick,
+}: {
+  hits: CatalogHit[];
+  onPick: (hit: CatalogHit) => void;
+}) {
+  return (
+    <div className="mt-3">
+      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-orange-600">
+        🔥 Hot buys — tap to open
+      </p>
+      <ul className="grid grid-cols-2 gap-1.5">
+        {hits.map((hit) => (
+          <li key={hit.id}>
+            <button
+              type="button"
+              onClick={() => onPick(hit)}
+              className="flex w-full items-center gap-2 rounded-lg border bg-white p-2 text-left shadow-sm ring-1 ring-orange-300/50 hover:border-orange-400"
+            >
+              {hit.imageUrl ? (
+                <Image
+                  src={hit.imageUrl}
+                  alt=""
+                  width={36}
+                  height={36}
+                  className="h-9 w-9 shrink-0 rounded object-contain"
+                  unoptimized
+                />
+              ) : (
+                <div className="h-9 w-9 shrink-0 rounded bg-neutral-100" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium">
+                  {hit.name}
+                </span>
+                <span className="block truncate text-[10px] text-neutral-500">
+                  {hit.groupName}
+                </span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ===== My case: quick-scroll one-tap sales from own inventory =====
+
+function MyCaseList({
+  sessionId,
+  inventory,
+}: {
+  sessionId: string;
+  inventory: InventoryListing[];
+}) {
+  const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [sellingId, setSellingId] = useState<string | null>(null);
+  const [, startTransition] = useTransition();
+
+  const shown = useMemo(() => {
+    const f = filter.trim().toLowerCase();
+    if (!f) return inventory;
+    return inventory.filter((i) => i.title.toLowerCase().includes(f));
+  }, [inventory, filter]);
+
+  function sell(item: InventoryListing) {
+    setError(null);
+    setSellingId(item.id);
+    startTransition(async () => {
+      const res = await recordInventorySale({
+        sessionId,
+        inventoryItemId: item.id,
+        quantity: 1,
+      });
+      if (res.error) setError(res.error);
+      setSellingId(null);
+    });
+  }
+
+  return (
+    <div>
+      <input
+        type="search"
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        placeholder="Filter your case…"
+        className="w-full rounded-lg border bg-white px-4 py-2.5 text-base shadow-sm outline-none ring-emerald-300 focus:ring-2"
+      />
+      {error && (
+        <p className="mt-2 rounded bg-red-50 px-2 py-1.5 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      {shown.length === 0 ? (
+        <p className="mt-3 rounded-lg border border-dashed p-4 text-center text-sm text-neutral-500">
+          {inventory.length === 0
+            ? "No available inventory — buys land here automatically."
+            : "Nothing matches that filter."}
+        </p>
+      ) : (
+        <ul className="mt-2 max-h-[55vh] space-y-1.5 overflow-y-auto pr-1">
+          {shown.map((item) => {
+            const img = item.photoUrl ?? item.imageUrl;
+            const priced = item.price > 0;
+            return (
+              <li
+                key={item.id}
+                className="flex items-center gap-2.5 rounded-lg border bg-white p-2 shadow-sm"
+              >
+                {img ? (
+                  <Image
+                    src={img}
+                    alt=""
+                    width={40}
+                    height={40}
+                    className="h-10 w-10 shrink-0 rounded object-contain"
+                    unoptimized
+                  />
+                ) : (
+                  <div className="h-10 w-10 shrink-0 rounded bg-neutral-100" />
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">
+                    {item.title}
+                  </span>
+                  <span className="block truncate text-xs text-neutral-500">
+                    {item.condition ? `${item.condition} · ` : ""}
+                    {item.quantity} in stock
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  disabled={!priced || sellingId === item.id}
+                  onClick={() => sell(item)}
+                  title={priced ? "Sell one at list price" : "No price set"}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold tabular-nums text-white hover:bg-emerald-700 disabled:opacity-40"
+                >
+                  {sellingId === item.id
+                    ? "…"
+                    : priced
+                      ? `Sell ${money(item.price)}`
+                      : "unpriced"}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -616,16 +910,33 @@ function BoothPanel({ url, qrSvg }: { url: string; qrSvg: string }) {
   );
 }
 
-// ===== Cash adjustment (the negotiation fudge factor) =====
+// ===== Per-trade cash settle (the negotiation fudge factor) =====
+//
+// The cash lives ON the trade (not the ledger) until the trade closes — then
+// it's recorded automatically alongside the accepted lines, attributed to the
+// deal.
 
-function CashPanel({ sessionId }: { sessionId: string }) {
+function PileCash({
+  pendingId,
+  cashToCustomer,
+  cashFromCustomer,
+}: {
+  pendingId: string;
+  cashToCustomer: number;
+  cashFromCustomer: number;
+}) {
   const [open, setOpen] = useState(false);
-  const [toThem, setToThem] = useState("");
-  const [fromThem, setFromThem] = useState("");
+  const [toThem, setToThem] = useState(
+    cashToCustomer > 0 ? String(cashToCustomer) : "",
+  );
+  const [fromThem, setFromThem] = useState(
+    cashFromCustomer > 0 ? String(cashFromCustomer) : "",
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const hasCash = cashToCustomer > 0 || cashFromCustomer > 0;
 
-  function add() {
+  function save() {
     setError(null);
     const t = toThem.trim() === "" ? 0 : Number(toThem);
     const f = fromThem.trim() === "" ? 0 : Number(fromThem);
@@ -633,22 +944,12 @@ function CashPanel({ sessionId }: { sessionId: string }) {
       setError("Enter a valid amount");
       return;
     }
-    if (t <= 0 && f <= 0) {
-      setError("Enter an amount");
-      return;
-    }
     startTransition(async () => {
-      const res = await recordCashAdjustment({
-        sessionId,
-        toThem: t,
-        fromThem: f,
-      });
+      const res = await setPileCash({ pendingId, toThem: t, fromThem: f });
       if (res.error) {
         setError(res.error);
         return;
       }
-      setToThem("");
-      setFromThem("");
       setOpen(false);
     });
   }
@@ -658,18 +959,36 @@ function CashPanel({ sessionId }: { sessionId: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center justify-between rounded-lg border bg-white px-4 py-2.5 text-sm font-medium shadow-sm"
+        className={`mt-2 w-full rounded-lg border px-3 py-1.5 text-left text-xs font-medium hover:border-emerald-400 ${
+          hasCash
+            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+            : "border-neutral-200 bg-white text-neutral-600"
+        }`}
       >
-        <span>💵 Cash adjustment</span>
-        <span className="text-neutral-400">Add</span>
+        💵{" "}
+        {hasCash
+          ? `Cash on this deal: ${[
+              cashToCustomer > 0 ? `you pay ${money(cashToCustomer)}` : null,
+              cashFromCustomer > 0
+                ? `they pay ${money(cashFromCustomer)}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")} — edit`
+          : "Cash settle on this deal…"}
       </button>
     );
   }
 
   return (
-    <div className="rounded-lg border bg-white p-3 shadow-sm">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm font-semibold">Final cash on the deal</span>
+    <div className="mt-2 rounded-lg border bg-white p-2.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-xs font-semibold">
+          Cash on this deal
+          <span className="ml-1 font-normal text-neutral-400">
+            (recorded when the trade closes)
+          </span>
+        </span>
         <button
           type="button"
           onClick={() => setOpen(false)}
@@ -679,9 +998,9 @@ function CashPanel({ sessionId }: { sessionId: string }) {
           ✕
         </button>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2">
         <label className="block">
-          <span className="text-xs font-medium text-red-600">
+          <span className="text-[11px] font-medium text-red-600">
             To them (you pay)
           </span>
           <input
@@ -692,11 +1011,11 @@ function CashPanel({ sessionId }: { sessionId: string }) {
             value={toThem}
             onChange={(e) => setToThem(e.target.value)}
             placeholder="0"
-            className="mt-1 w-full rounded border px-2 py-2 text-sm"
+            className="mt-0.5 w-full rounded border px-2 py-1.5 text-sm"
           />
         </label>
         <label className="block">
-          <span className="text-xs font-medium text-emerald-700">
+          <span className="text-[11px] font-medium text-emerald-700">
             From them (you collect)
           </span>
           <input
@@ -707,24 +1026,24 @@ function CashPanel({ sessionId }: { sessionId: string }) {
             value={fromThem}
             onChange={(e) => setFromThem(e.target.value)}
             placeholder="0"
-            className="mt-1 w-full rounded border px-2 py-2 text-sm"
+            className="mt-0.5 w-full rounded border px-2 py-1.5 text-sm"
           />
         </label>
       </div>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}
       <button
         type="button"
-        onClick={add}
+        onClick={save}
         disabled={pending}
-        className="mt-3 w-full rounded-lg bg-neutral-800 px-4 py-2 text-sm font-semibold text-white hover:bg-neutral-900 disabled:opacity-50"
+        className="mt-2 w-full rounded-lg bg-neutral-800 px-3 py-1.5 text-sm font-semibold text-white hover:bg-neutral-900 disabled:opacity-50"
       >
-        Add to deal
+        Save
       </button>
     </div>
   );
 }
 
-// ===== Pending piles (customer-built trades awaiting review) =====
+// ===== Open trades (customer QR piles + operator-started counter trades) =====
 
 function money2(n: number | null): string {
   return n === null ? "—" : money(n);
@@ -734,7 +1053,7 @@ function PendingPiles({ pending }: { pending: PendingTradeView[] }) {
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-semibold text-neutral-700">
-        Waiting piles ({pending.length})
+        Open trades ({pending.length})
       </h2>
       {pending.map((p) => (
         <PendingPile key={p.id} pile={p} />
@@ -752,8 +1071,14 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
   const liveItems = pile.items.filter((i) => i.status === "pending");
   const gives = liveItems.filter((i) => i.side === "give");
   const wants = liveItems.filter((i) => i.side === "want");
-  // Net from the customer's side: what they give (you pay) minus what they take.
-  const net = pile.giveTotal - pile.wantTotal;
+  const hasCash = pile.cashToCustomer > 0 || pile.cashFromCustomer > 0;
+  // Net you pay: their cards + cash you hand over, minus your cards they take
+  // and cash they hand you.
+  const net =
+    pile.giveTotal +
+    pile.cashToCustomer -
+    pile.wantTotal -
+    pile.cashFromCustomer;
 
   function acceptAll() {
     setNotice(null);
@@ -784,7 +1109,8 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
             </span>
           </p>
           <p className="text-xs text-neutral-500">
-            They give {money2(pile.giveTotal)} · take {money2(pile.wantTotal)} ·{" "}
+            They give {money2(pile.giveTotal)} · take {money2(pile.wantTotal)}
+            {hasCash && " · incl. cash"} ·{" "}
             <span className={net >= 0 ? "text-emerald-700" : "text-red-600"}>
               {net >= 0 ? "you pay " : "they owe "}
               {money(Math.abs(net))}
@@ -792,6 +1118,14 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
           </p>
         </div>
       </div>
+
+      {liveItems.length === 0 && (
+        <p className="mt-2 rounded border border-dashed border-neutral-300 bg-white/60 px-3 py-2 text-xs text-neutral-500">
+          Empty trade — use <span className="font-semibold">＋ Add a card</span>{" "}
+          below: their cards as &quot;they give&quot;, your cards as &quot;they
+          want&quot;.
+        </p>
+      )}
 
       {gives.length > 0 && (
         <PileSection title="They give (you buy)" tone="give">
@@ -809,6 +1143,12 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
       )}
 
       <AddToPile pendingId={pile.id} />
+
+      <PileCash
+        pendingId={pile.id}
+        cashToCustomer={pile.cashToCustomer}
+        cashFromCustomer={pile.cashFromCustomer}
+      />
 
       {gives.length > 0 && (
         <label className="mt-2 flex items-center gap-1.5 text-xs text-neutral-600">
@@ -837,7 +1177,7 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
         <button
           type="button"
           onClick={acceptAll}
-          disabled={pending}
+          disabled={pending || (liveItems.length === 0 && !hasCash)}
           className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
         >
           Accept all
@@ -845,7 +1185,7 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
         <form
           action={dismissPendingPile}
           onSubmit={(e) => {
-            if (!confirm("Dismiss this customer's whole pile? It can't be undone."))
+            if (!confirm("Dismiss this whole trade? It can't be undone."))
               e.preventDefault();
           }}
         >
@@ -896,9 +1236,14 @@ function PendingLine({
   const [override, setOverride] = useState("");
   const [error, setError] = useState<string | null>(null);
   const isGive = item.side === "give";
-  // Re-grading only makes sense for the customer's own cards (give side).
-  const conditionOpts =
-    isGive && !item.graded ? (CONDITIONS[item.category] ?? []) : [];
+  // Condition is editable on the customer's cards AND on catalog-priced sell
+  // lines (repriced via the condition multiplier). Inventory-picked items keep
+  // their stored condition — the physical item is what it is.
+  const conditionEditable =
+    !item.graded && (isGive || item.inventoryItemId === null);
+  const conditionOpts = conditionEditable
+    ? (CONDITIONS[item.category] ?? [])
+    : [];
   const lineTotal =
     item.unitPrice === null ? null : item.unitPrice * item.quantity;
   // Graded slabs, unmatched cards, and $0-floored offers can't be auto-taken —
@@ -986,27 +1331,32 @@ function PendingLine({
 
       {error && <p className="mt-1 text-[11px] text-red-600">{error}</p>}
 
-      {/* Hand price for graded / unpriced / $0 lines */}
-      {needsManual && (
-        <div className="mt-1.5 flex items-center gap-1.5">
-          <span className="text-xs text-amber-700">
-            {item.graded ? "Slab price $" : "Set price $"}
-          </span>
-          <input
-            type="number"
-            inputMode="decimal"
-            min={0}
-            step="1"
-            value={override}
-            onChange={(e) => setOverride(e.target.value)}
-            placeholder="0"
-            className="w-20 rounded border px-2 py-1 text-sm"
-          />
-          <span className="text-[11px] text-neutral-400">each</span>
-        </div>
-      )}
+      {/* Hand price: REQUIRED for graded/unpriced/$0 lines, optional override
+          everywhere else — negotiation works on both sides of the counter. */}
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <span
+          className={`text-xs ${needsManual ? "text-amber-700" : "text-neutral-400"}`}
+        >
+          {item.graded
+            ? "Slab price $"
+            : needsManual
+              ? "Set price $"
+              : "Override $"}
+        </span>
+        <input
+          type="number"
+          inputMode="decimal"
+          min={0}
+          step="1"
+          value={override}
+          onChange={(e) => setOverride(e.target.value)}
+          placeholder={needsManual ? "0" : "auto"}
+          className="w-20 rounded border px-2 py-1 text-sm"
+        />
+        <span className="text-[11px] text-neutral-400">each</span>
+      </div>
 
-      {/* Re-grade the customer's card on the spot */}
+      {/* Re-grade on the spot — their cards, or catalog-priced sell lines */}
       {conditionOpts.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {conditionOpts.map((c) => (
@@ -1094,9 +1444,24 @@ function AddToPile({ pendingId }: { pendingId: string }) {
           }}
         />
       ) : (
-        <SearchBox onPick={setPicked} />
+        <LocalSearchBox onPick={setPicked} />
       )}
     </div>
+  );
+}
+
+/** Self-contained SearchBox for nested sub-searches (add-to-pile). */
+function LocalSearchBox({ onPick }: { onPick: (hit: CatalogHit) => void }) {
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<CatalogHit[]>([]);
+  return (
+    <SearchBox
+      query={query}
+      onQuery={setQuery}
+      hits={hits}
+      onHits={setHits}
+      onPick={onPick}
+    />
   );
 }
 

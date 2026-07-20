@@ -9,7 +9,7 @@
  * actions, which reuses the quote engine) and may be overridden by hand —
  * show mode is staff-only, so an operator's manual price is trusted.
  */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db, tables } from "@/db";
 import { conditionMultiplier } from "@/lib/conditions";
@@ -216,6 +216,8 @@ export type RecordTxnInput = {
   inventoryAction: InventoryAction | null;
   /** Sells only: draw down THIS specific inventory row (booth "want" lines) */
   sellInventoryItemId?: string | null;
+  /** The deal this line settles (accepted pile lines + its cash) */
+  pendingId?: string | null;
 };
 
 /**
@@ -284,6 +286,7 @@ export async function recordTransaction(
         manualPrice: input.manualPrice,
         inventoryAction: input.kind === "buy" ? input.inventoryAction : null,
         inventoryItemId,
+        pendingId: input.pendingId ?? null,
       })
       .returning();
     return toTransaction(row);
@@ -413,6 +416,9 @@ export type PendingTradeView = {
   /** Sum of give line totals (what you'd pay) and want line totals (their cart) */
   giveTotal: number;
   wantTotal: number;
+  /** Cash settle stored on the deal; hits the ledger when the trade closes */
+  cashToCustomer: number;
+  cashFromCustomer: number;
 };
 
 export type PendingLineInput = {
@@ -547,6 +553,10 @@ export async function listPendingTrades(
       items: priced,
       giveTotal,
       wantTotal,
+      cashToCustomer:
+        trade.cashToCustomer === null ? 0 : Number(trade.cashToCustomer),
+      cashFromCustomer:
+        trade.cashFromCustomer === null ? 0 : Number(trade.cashFromCustomer),
     });
   }
   return views;
@@ -622,6 +632,7 @@ export async function acceptPendingItem(
       unitPrice,
       manualPrice: hasManual,
       inventoryAction: opts.inventoryAction ?? "added",
+      pendingId: trade.id,
     });
   } else {
     await recordTransaction({
@@ -639,6 +650,7 @@ export async function acceptPendingItem(
       manualPrice: hasManual,
       inventoryAction: null,
       sellInventoryItemId: item.inventoryItemId,
+      pendingId: trade.id,
     });
   }
 
@@ -686,6 +698,121 @@ export async function acceptPendingTrade(
   }
   await closeTradeIfResolved(pendingId);
   return { ok: true, accepted, skipped };
+}
+
+// ===== Deal history: closed trades, reopenable with full detail =====
+
+export type DealView = {
+  id: string;
+  label: string | null;
+  rateType: RateType;
+  status: PendingStatus; // accepted | dismissed
+  createdAt: Date | null;
+  cashToCustomer: number;
+  cashFromCustomer: number;
+  /** What the deal contained (all lines, incl. dismissed ones) */
+  items: {
+    id: string;
+    side: PendingSide;
+    title: string;
+    quantity: number;
+    condition: string | null;
+    graded: boolean;
+    status: PendingStatus;
+  }[];
+  /** What was actually recorded in the ledger for this deal */
+  txns: ShowTransaction[];
+  paidOut: number;
+  takenIn: number;
+};
+
+/** Closed (accepted/dismissed) deals for a session, newest first. */
+export async function listDeals(
+  shopId: string,
+  sessionId: string,
+): Promise<DealView[]> {
+  const trades = await db
+    .select()
+    .from(tables.showPendingTrades)
+    .where(
+      and(
+        eq(tables.showPendingTrades.shopId, shopId),
+        eq(tables.showPendingTrades.sessionId, sessionId),
+        inArray(tables.showPendingTrades.status, ["accepted", "dismissed"]),
+      ),
+    )
+    .orderBy(desc(tables.showPendingTrades.createdAt));
+  if (trades.length === 0) return [];
+
+  const deals: DealView[] = [];
+  for (const trade of trades) {
+    const items = await db
+      .select()
+      .from(tables.showPendingItems)
+      .where(eq(tables.showPendingItems.pendingId, trade.id));
+    const txnRows = await db
+      .select()
+      .from(tables.showTransactions)
+      .where(eq(tables.showTransactions.pendingId, trade.id))
+      .orderBy(tables.showTransactions.createdAt);
+    const txns = txnRows.map(toTransaction);
+    let paidOutCents = 0;
+    let takenInCents = 0;
+    for (const t of txns) {
+      const cents = Math.round(t.lineTotal * 100);
+      if (t.kind === "buy") paidOutCents += cents;
+      else takenInCents += cents;
+    }
+    deals.push({
+      id: trade.id,
+      label: trade.label,
+      rateType: trade.rateType,
+      status: trade.status,
+      createdAt: trade.createdAt,
+      cashToCustomer:
+        trade.cashToCustomer === null ? 0 : Number(trade.cashToCustomer),
+      cashFromCustomer:
+        trade.cashFromCustomer === null ? 0 : Number(trade.cashFromCustomer),
+      items: items.map((it) => ({
+        id: it.id,
+        side: it.side,
+        title: it.title,
+        quantity: it.quantity,
+        condition: it.condition,
+        graded: it.graded,
+        status: it.status,
+      })),
+      txns,
+      paidOut: paidOutCents / 100,
+      takenIn: takenInCents / 100,
+    });
+  }
+  return deals;
+}
+
+/** Set the cash settle on an open trade (recorded when the trade closes). */
+export async function setPendingTradeCash(
+  shopId: string,
+  pendingId: string,
+  toThem: number,
+  fromThem: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const [updated] = await db
+    .update(tables.showPendingTrades)
+    .set({
+      cashToCustomer: toThem > 0 ? toMoneyString(toThem) : null,
+      cashFromCustomer: fromThem > 0 ? toMoneyString(fromThem) : null,
+    })
+    .where(
+      and(
+        eq(tables.showPendingTrades.shopId, shopId),
+        eq(tables.showPendingTrades.id, pendingId),
+        eq(tables.showPendingTrades.status, "pending"),
+      ),
+    )
+    .returning({ id: tables.showPendingTrades.id });
+  if (!updated) return { ok: false, error: "Trade not open" };
+  return { ok: true };
 }
 
 /** Edit a still-pending line in place (operator re-grades / adjusts quantity). */
@@ -815,7 +942,11 @@ export async function dismissPendingTrade(
   });
 }
 
-/** Mark a pile accepted once no pending lines remain. */
+/**
+ * Mark a pile accepted once no pending lines remain — and record the deal's
+ * cash settle in the ledger exactly once (the status flip below is guarded so
+ * only the caller that transitions pending → accepted records it).
+ */
 async function closeTradeIfResolved(pendingId: string): Promise<void> {
   const [stillPending] = await db
     .select({ id: tables.showPendingItems.id })
@@ -827,11 +958,61 @@ async function closeTradeIfResolved(pendingId: string): Promise<void> {
       ),
     )
     .limit(1);
-  if (!stillPending) {
-    await db
-      .update(tables.showPendingTrades)
-      .set({ status: "accepted" })
-      .where(eq(tables.showPendingTrades.id, pendingId));
+  if (stillPending) return;
+
+  const [closed] = await db
+    .update(tables.showPendingTrades)
+    .set({ status: "accepted" })
+    .where(
+      and(
+        eq(tables.showPendingTrades.id, pendingId),
+        eq(tables.showPendingTrades.status, "pending"),
+      ),
+    )
+    .returning();
+  if (!closed) return;
+
+  const toThem = closed.cashToCustomer === null ? 0 : Number(closed.cashToCustomer);
+  const fromThem =
+    closed.cashFromCustomer === null ? 0 : Number(closed.cashFromCustomer);
+  if (toThem <= 0 && fromThem <= 0) return;
+
+  const suffix = ` — ${closed.label ?? "Walk-up"}`;
+  if (toThem > 0) {
+    await recordTransaction({
+      shopId: closed.shopId,
+      sessionId: closed.sessionId,
+      kind: "buy",
+      productId: null,
+      title: `Cash to customer${suffix}`,
+      category: "sealed",
+      condition: null,
+      printing: null,
+      quantity: 1,
+      rateType: "cash",
+      unitPrice: toThem,
+      manualPrice: true,
+      inventoryAction: null,
+      pendingId: closed.id,
+    });
+  }
+  if (fromThem > 0) {
+    await recordTransaction({
+      shopId: closed.shopId,
+      sessionId: closed.sessionId,
+      kind: "sell",
+      productId: null,
+      title: `Cash from customer${suffix}`,
+      category: "sealed",
+      condition: null,
+      printing: null,
+      quantity: 1,
+      rateType: null,
+      unitPrice: fromThem,
+      manualPrice: true,
+      inventoryAction: null,
+      pendingId: closed.id,
+    });
   }
 }
 
@@ -900,6 +1081,71 @@ async function priceWantItem(
     return sellUnitPrice(settings, item.productId, item.printing, item.condition);
   }
   return null;
+}
+
+/**
+ * Sell a specific inventory row at its effective price (asking price, or
+ * market × markup) — the "My case" one-tap sale. Draws down exactly that row,
+ * so there's no best-effort product matching to get wrong.
+ */
+export async function sellInventoryRow(
+  shopId: string,
+  sessionId: string,
+  inventoryItemId: string,
+  quantity: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const settings = await getSettings(shopId);
+  const [row] = await db
+    .select({
+      title: tables.inventoryItems.title,
+      category: tables.inventoryItems.category,
+      condition: tables.inventoryItems.condition,
+      quantity: tables.inventoryItems.quantity,
+      status: tables.inventoryItems.status,
+      askingPrice: tables.inventoryItems.askingPrice,
+      productId: tables.inventoryItems.productId,
+      marketPrice: tables.catalogProducts.marketPrice,
+    })
+    .from(tables.inventoryItems)
+    .leftJoin(
+      tables.catalogProducts,
+      eq(tables.catalogProducts.id, tables.inventoryItems.productId),
+    )
+    .where(
+      and(
+        eq(tables.inventoryItems.shopId, shopId),
+        eq(tables.inventoryItems.id, inventoryItemId),
+      ),
+    );
+  if (!row) return { ok: false, error: "Item not found" };
+  if (row.status !== "available" || row.quantity < quantity) {
+    return { ok: false, error: "Not enough stock" };
+  }
+  const priced = effectiveInventoryPrice(
+    row.askingPrice === null ? null : Number(row.askingPrice),
+    row.marketPrice === null ? null : Number(row.marketPrice),
+    settings.inventory_market_markup,
+  );
+  if (!priced || priced.price <= 0) {
+    return { ok: false, error: "Item has no price — set one first" };
+  }
+  await recordTransaction({
+    shopId,
+    sessionId,
+    kind: "sell",
+    productId: row.productId,
+    title: row.title,
+    category: row.category,
+    condition: row.condition,
+    printing: null,
+    quantity,
+    rateType: null,
+    unitPrice: priced.price,
+    manualPrice: false,
+    inventoryAction: null,
+    sellInventoryItemId: inventoryItemId,
+  });
+  return { ok: true };
 }
 
 // ===== Pricing =====
@@ -986,6 +1232,7 @@ function toTransaction(
     manualPrice: row.manualPrice,
     inventoryAction: row.inventoryAction as InventoryAction | null,
     inventoryItemId: row.inventoryItemId,
+    pendingId: row.pendingId,
     createdAt: row.createdAt,
   };
 }

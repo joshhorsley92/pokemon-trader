@@ -32,6 +32,8 @@ export type ShowTransaction = {
   manualPrice: boolean;
   inventoryAction: InventoryAction | null;
   inventoryItemId: string | null;
+  /** Deal (pending trade) this line settled; null for one-off buys/sells */
+  pendingId: string | null;
   createdAt: Date | null;
 };
 

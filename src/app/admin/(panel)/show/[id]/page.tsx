@@ -2,11 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   getSession,
+  listDeals,
   listTransactions,
   sessionTotals,
 } from "@/lib/show";
 import { getCurrentShopId } from "@/lib/tenant";
 import { addQueuedBuys, closeShowSession } from "../actions";
+import { DealHistory } from "../deal-history";
 import { DeleteSessionButton } from "./delete-session-button";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +27,10 @@ export default async function SessionPage({
   const session = await getSession(shopId, id);
   if (!session) notFound();
 
-  const transactions = await listTransactions(shopId, id);
+  const [transactions, deals] = await Promise.all([
+    listTransactions(shopId, id),
+    listDeals(shopId, id),
+  ]);
   const totals = sessionTotals(transactions);
   const isOpen = session.status === "open";
 
@@ -110,6 +115,8 @@ export default async function SessionPage({
         )}
         <DeleteSessionButton sessionId={id} />
       </div>
+
+      <DealHistory deals={deals} />
 
       {/* Ledger */}
       <div>

@@ -1,9 +1,13 @@
 import { headers } from "next/headers";
 import Link from "next/link";
 import QRCode from "qrcode";
+import { listHotBuys } from "@/lib/hot-buys";
+import { listInventory } from "@/lib/inventory";
 import { reachableBaseUrl } from "@/lib/lan";
+import { getSettings } from "@/lib/settings";
 import {
   getOpenSession,
+  listDeals,
   listPendingTrades,
   listRecentSessions,
   listTransactions,
@@ -11,6 +15,7 @@ import {
 } from "@/lib/show";
 import { getCurrentShopId } from "@/lib/tenant";
 import { openShowSession } from "./actions";
+import { DealHistory } from "./deal-history";
 import { ShowClient } from "./show-client";
 
 export const metadata = { title: "Show Mode" };
@@ -77,11 +82,27 @@ export default async function ShowPage() {
     );
   }
 
-  const [transactions, pending] = await Promise.all([
-    listTransactions(shopId, open.id),
-    listPendingTrades(shopId, open.id),
-  ]);
+  const settings = await getSettings(shopId);
+  const [transactions, pending, inventory, hotBuyRows, deals] =
+    await Promise.all([
+      listTransactions(shopId, open.id),
+      listPendingTrades(shopId, open.id),
+      listInventory(shopId, settings, { availableOnly: true }),
+      listHotBuys(shopId),
+      listDeals(shopId, open.id),
+    ]);
   const totals = sessionTotals(transactions);
+  // Quick-tile shape matches CatalogHit so a tap opens the normal EntryCard.
+  const hotBuys = hotBuyRows.map((hb) => ({
+    id: hb.productId,
+    name: hb.productName,
+    groupId: hb.groupId,
+    groupName: hb.groupName,
+    imageUrl: hb.imageUrl,
+    marketPrice: hb.marketPrice,
+    category: hb.category,
+    printings: hb.printings,
+  }));
 
   // Booth link + QR (offline-generated SVG). The base URL is resolved to
   // something another device can reach — if admin was opened on localhost, the
@@ -105,7 +126,7 @@ export default async function ShowPage() {
   }
 
   return (
-    <div className="mx-auto max-w-lg">
+    <div className="mx-auto max-w-lg space-y-4">
       <ShowClient
         sessionId={open.id}
         sessionName={open.name}
@@ -114,7 +135,10 @@ export default async function ShowPage() {
         pending={pending}
         boothUrl={boothUrl}
         qrSvg={qrSvg}
+        inventory={inventory}
+        hotBuys={hotBuys}
       />
+      <DealHistory deals={deals} />
     </div>
   );
 }

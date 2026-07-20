@@ -22,6 +22,7 @@ function txn(over: Partial<ShowTransaction>): ShowTransaction {
     manualPrice: false,
     inventoryAction: null,
     inventoryItemId: null,
+    pendingId: null,
     createdAt: new Date("2026-06-29T15:00:00Z"),
     ...over,
   };

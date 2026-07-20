@@ -14,13 +14,16 @@ import {
   addQueuedToInventory,
   closeSession,
   countPendingTrades,
+  createPendingTrade,
   deleteSession,
   dismissPendingTrade,
   getSession,
   openSession,
   recordTransaction,
   removePendingItem,
+  sellInventoryRow,
   sellUnitPrice,
+  setPendingTradeCash,
   updatePendingItem,
   voidTransaction,
 } from "@/lib/show";
@@ -243,64 +246,70 @@ export async function recordPurchase(
   return { ok: true };
 }
 
-const cashSchema = z.object({
+const inventorySaleSchema = z.object({
   sessionId: z.string().uuid(),
+  inventoryItemId: z.string().uuid(),
+  quantity: z.number().int().min(1).max(999).optional().default(1),
+});
+
+/** One-tap "My case" sale: sell a specific inventory row at its list price. */
+export async function recordInventorySale(
+  input: z.infer<typeof inventorySaleSchema>,
+): Promise<TxnResult> {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const parsed = inventorySaleSchema.safeParse(input);
+  if (!parsed.success) return { error: "Invalid sale" };
+  const { sessionId, inventoryItemId, quantity } = parsed.data;
+
+  const guard = await requireOpenSession(shopId, sessionId);
+  if (guard.error) return { error: guard.error };
+
+  const res = await sellInventoryRow(shopId, sessionId, inventoryItemId, quantity);
+  if (!res.ok) return { error: res.error };
+  revalidatePath("/admin/show");
+  return { ok: true };
+}
+
+/** Operator starts a multi-card trade at the counter: an empty pending pile
+    built with the same add/edit/accept flow customer QR piles use. */
+export async function startOperatorTrade(formData: FormData) {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const sessionId = z.string().uuid().parse(formData.get("sessionId"));
+  const guard = await requireOpenSession(shopId, sessionId);
+  if (guard.error) return;
+  await createPendingTrade({
+    shopId,
+    sessionId,
+    label: "Counter trade",
+    rateType: "store_credit",
+    lines: [],
+  });
+  revalidatePath("/admin/show");
+}
+
+const pileCashSchema = z.object({
+  pendingId: z.string().uuid(),
   toThem: z.number().min(0).max(1_000_000).optional().default(0),
   fromThem: z.number().min(0).max(1_000_000).optional().default(0),
 });
 
 /**
- * Record a manual cash adjustment to balance a deal — the negotiation fudge
- * factor. "To them" is money you hand over (Paid Out); "From them" is money you
- * collect (Taken In). Neither touches inventory.
+ * Set the cash settle ON a trade — the negotiation fudge factor. Stored with
+ * the pile and shown in its net; the ledger transactions are recorded once,
+ * automatically, when the trade closes (all lines accepted).
  */
-export async function recordCashAdjustment(
-  input: z.infer<typeof cashSchema>,
+export async function setPileCash(
+  input: z.infer<typeof pileCashSchema>,
 ): Promise<TxnResult> {
   await requireSession();
   const shopId = await getCurrentShopId();
-  const parsed = cashSchema.safeParse(input);
+  const parsed = pileCashSchema.safeParse(input);
   if (!parsed.success) return { error: "Invalid amount" };
-  const { sessionId, toThem, fromThem } = parsed.data;
-  if (toThem <= 0 && fromThem <= 0) return { error: "Enter an amount" };
-
-  const guard = await requireOpenSession(shopId, sessionId);
-  if (guard.error) return { error: guard.error };
-
-  if (toThem > 0) {
-    await recordTransaction({
-      shopId,
-      sessionId,
-      kind: "buy",
-      productId: null,
-      title: "Cash to customer",
-      category: "sealed",
-      condition: null,
-      printing: null,
-      quantity: 1,
-      rateType: "cash",
-      unitPrice: toThem,
-      manualPrice: true,
-      inventoryAction: null,
-    });
-  }
-  if (fromThem > 0) {
-    await recordTransaction({
-      shopId,
-      sessionId,
-      kind: "sell",
-      productId: null,
-      title: "Cash from customer",
-      category: "sealed",
-      condition: null,
-      printing: null,
-      quantity: 1,
-      rateType: null,
-      unitPrice: fromThem,
-      manualPrice: true,
-      inventoryAction: null,
-    });
-  }
+  const { pendingId, toThem, fromThem } = parsed.data;
+  const res = await setPendingTradeCash(shopId, pendingId, toThem, fromThem);
+  if (!res.ok) return { error: res.error };
   revalidatePath("/admin/show");
   return { ok: true };
 }

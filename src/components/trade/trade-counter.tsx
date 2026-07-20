@@ -516,6 +516,20 @@ function StepTradeIn({
         ))}
       </div>
 
+      {/* Gentle push toward trade: only shown when cash is selected and trade
+          would genuinely pay more (both totals come free with the quote). */}
+      {rateType === "cash" &&
+        quote?.totals &&
+        quote.totals.store_credit > quote.totals.cash && (
+          <p className="mt-1.5 text-xs text-emerald-100/80">
+            💚 You get{" "}
+            <span className="font-semibold text-emerald-50">
+              {money(quote.totals.store_credit - quote.totals.cash)} more
+            </span>{" "}
+            with Trade!
+          </p>
+        )}
+
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <input
           type="search"

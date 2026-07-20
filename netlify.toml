@@ -1,0 +1,13 @@
+[build]
+  # Webpack, not the default Turbopack: Netlify's edge bundler can't load
+  # Turbopack's chunked middleware output (ChunkLoadError on [externals] chunks
+  # when packaging proxy.ts as an edge function).
+  command = "npx next build --webpack"
+
+# Netlify's Next.js runtime handles the App Router, server components, and
+# server actions. Pinned here so the build doesn't depend on auto-detection.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[build.environment]
+  NODE_VERSION = "22"

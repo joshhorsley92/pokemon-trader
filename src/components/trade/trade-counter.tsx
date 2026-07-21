@@ -469,6 +469,7 @@ export function TradeCounter({
           <StepOurCase
             inventory={inventory}
             wants={wants}
+            credit={(quote?.total ?? 0) + bulkLotTotal(bulkLot)}
             onToggle={toggleWant}
             onQty={setWantQty}
             onBack={() => goStep(1)}
@@ -1181,9 +1182,13 @@ function StepTradeIn({
 
 // ===== Step 2: the shop's display case =====
 
+type CaseSort = "featured" | "name" | "price_desc" | "price_asc";
+type CaseType = "all" | "singles" | "sealed" | "graded";
+
 function StepOurCase({
   inventory,
   wants,
+  credit,
   onToggle,
   onQty,
   onBack,
@@ -1191,17 +1196,86 @@ function StepOurCase({
 }: {
   inventory: ShopItem[];
   wants: WantLine[];
+  /** Total trade-in credit built so far — powers the "within my credit" filter */
+  credit: number;
   onToggle: (item: ShopItem) => void;
   onQty: (itemId: string, qty: number) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
   const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<CaseSort>("featured");
+  const [type, setType] = useState<CaseType>("all");
+  const [setName, setSetName] = useState<string>("all");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [affordableOnly, setAffordableOnly] = useState(false);
+
+  // Only surface filter options that actually exist in the case.
+  const availableTypes = useMemo(
+    () => new Set(inventory.map((i) => i.category)),
+    [inventory],
+  );
+  const availableSets = useMemo(
+    () =>
+      [...new Set(inventory.map((i) => i.setName).filter(Boolean))].sort(
+        (a, b) => (a as string).localeCompare(b as string),
+      ) as string[],
+    [inventory],
+  );
+
+  // Remaining credit = total built minus what's already picked out.
+  const selectedTotal =
+    wants.reduce((s, w) => s + Math.round(w.item.price * 100) * w.quantity, 0) /
+    100;
+  const remaining = Math.round((credit - selectedTotal) * 100) / 100;
+
+  const filtersActive =
+    type !== "all" ||
+    setName !== "all" ||
+    maxPrice.trim() !== "" ||
+    affordableOnly ||
+    sort !== "featured";
+
+  function clearFilters() {
+    setType("all");
+    setSetName("all");
+    setMaxPrice("");
+    setAffordableOnly(false);
+    setSort("featured");
+  }
+
   const shown = useMemo(() => {
+    let list = inventory;
     const f = filter.trim().toLowerCase();
-    if (!f) return inventory;
-    return inventory.filter((i) => i.title.toLowerCase().includes(f));
-  }, [inventory, filter]);
+    if (f) {
+      list = list.filter((i) =>
+        `${i.title} ${i.setName ?? ""} ${i.cardNumber ?? ""}`
+          .toLowerCase()
+          .includes(f),
+      );
+    }
+    if (type !== "all") list = list.filter((i) => i.category === type);
+    if (setName !== "all") list = list.filter((i) => i.setName === setName);
+    const max = maxPrice.trim() === "" ? null : Number(maxPrice);
+    if (max !== null && !Number.isNaN(max)) {
+      list = list.filter((i) => i.price <= max);
+    }
+    if (affordableOnly && remaining > 0) {
+      list = list.filter((i) => i.price <= remaining);
+    }
+    const sorted = [...list];
+    if (sort === "name") {
+      sorted.sort((a, b) => a.title.localeCompare(b.title));
+    } else if (sort === "price_desc") {
+      sorted.sort((a, b) => b.price - a.price);
+    } else if (sort === "price_asc") {
+      sorted.sort((a, b) => a.price - b.price);
+    }
+    return sorted;
+  }, [inventory, filter, type, setName, maxPrice, affordableOnly, remaining, sort]);
+
+  const selectClass =
+    "rounded-md bg-white/95 px-2 py-1.5 text-sm text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2";
 
   return (
     <section className="felt-stitch p-4 sm:p-6">
@@ -1220,6 +1294,97 @@ function StepOurCase({
         placeholder="Search the case…"
         className="mt-4 w-full rounded-md border-0 bg-white px-4 py-3 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
       />
+
+      {/* Streamlined filter/sort bar — client-side, instant */}
+      {inventory.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as CaseSort)}
+            className={selectClass}
+          >
+            <option value="featured">Featured</option>
+            <option value="name">Name A–Z</option>
+            <option value="price_desc">Price: high → low</option>
+            <option value="price_asc">Price: low → high</option>
+          </select>
+
+          {availableTypes.size > 1 && (
+            <select
+              aria-label="Product type"
+              value={type}
+              onChange={(e) => setType(e.target.value as CaseType)}
+              className={selectClass}
+            >
+              <option value="all">All types</option>
+              {availableTypes.has("singles") && (
+                <option value="singles">Singles</option>
+              )}
+              {availableTypes.has("sealed") && (
+                <option value="sealed">Sealed</option>
+              )}
+              {availableTypes.has("graded") && (
+                <option value="graded">Graded</option>
+              )}
+            </select>
+          )}
+
+          {availableSets.length > 1 && (
+            <select
+              aria-label="Set"
+              value={setName}
+              onChange={(e) => setSetName(e.target.value)}
+              className={`${selectClass} max-w-[11rem]`}
+            >
+              <option value="all">All sets</option>
+              {availableSets.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <div className="flex items-center gap-1 rounded-md bg-white/95 px-2 py-1 text-sm text-[var(--ink)] shadow-inner">
+            <span className="text-neutral-500">Max $</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              value={maxPrice}
+              onChange={(e) => setMaxPrice(e.target.value)}
+              placeholder="any"
+              className="w-16 bg-transparent text-right outline-none"
+            />
+          </div>
+
+          {remaining > 0 && (
+            <label className="flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1.5 text-sm text-[var(--ink)] shadow-inner">
+              <input
+                type="checkbox"
+                checked={affordableOnly}
+                onChange={(e) => setAffordableOnly(e.target.checked)}
+              />
+              Within my credit ({money(remaining)})
+            </label>
+          )}
+
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-sm font-medium text-emerald-100/80 hover:text-white"
+            >
+              Clear
+            </button>
+          )}
+
+          <span className="ml-auto text-sm text-emerald-100/70">
+            {shown.length} in the case
+          </span>
+        </div>
+      )}
 
       {inventory.length === 0 ? (
         <p className="mt-6 rounded-md bg-emerald-950/40 p-4 text-sm text-emerald-100/80">
@@ -1309,6 +1474,20 @@ function StepOurCase({
             );
           })}
             </ul>
+            {shown.length === 0 && (
+              <p className="relative z-[2] py-8 text-center text-sm text-emerald-100/80">
+                Nothing in the case matches those filters.
+                {filtersActive && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="ml-1 font-semibold text-white underline"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </p>
+            )}
           </div>
         </div>
       )}

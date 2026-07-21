@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { setItemPrice, setItemQuantity } from "./actions";
 import { DeleteItemButton, ItemDialog } from "./item-forms";
 
 export type InventoryRow = {
@@ -30,31 +31,46 @@ export type InventoryRow = {
   priceSource: "fixed" | "market" | null;
 };
 
+const PAGE_SIZES = [10, 25, 50, 100] as const;
+
 /**
- * Inventory list with an instant client-side filter — no round trip, so
- * finding a card in a few hundred rows is just typing.
+ * Inventory list: instant client-side filter, alphabetical sort, pagination,
+ * and inline quantity/price editing so common tweaks don't need the dialog.
  */
 export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
   const [filter, setFilter] = useState("");
+  const [pageSize, setPageSize] = useState<number>(25);
+  const [page, setPage] = useState(1);
 
-  const shown = useMemo(() => {
+  const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    if (!f) return rows;
-    return rows.filter((r) =>
-      [
-        r.title,
-        r.condition ?? "",
-        r.printing ?? "",
-        r.setName ?? "",
-        r.cardNumber ?? "",
-        r.category,
-        r.status,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(f),
+    const matched = !f
+      ? rows
+      : rows.filter((r) =>
+          [
+            r.title,
+            r.condition ?? "",
+            r.printing ?? "",
+            r.setName ?? "",
+            r.cardNumber ?? "",
+            r.category,
+            r.status,
+          ]
+            .join(" ")
+            .toLowerCase()
+            .includes(f),
+        );
+    return [...matched].sort((a, b) =>
+      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
     );
   }, [rows, filter]);
+
+  // Clamp the page during render (derived, not stateful) so a shrinking filter
+  // can't leave us on an out-of-range page.
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const start = (safePage - 1) * pageSize;
+  const shown = filtered.slice(start, start + pageSize);
 
   return (
     <div className="space-y-2">
@@ -62,15 +78,31 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
         <input
           type="search"
           value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            setPage(1);
+          }}
           placeholder="Search my inventory — name, condition, status…"
           className="w-full max-w-md rounded-lg border px-3 py-2 text-sm outline-none ring-emerald-300 focus:ring-2"
         />
-        <span className="text-xs text-neutral-500">
-          {filter.trim()
-            ? `${shown.length} of ${rows.length} items`
-            : `${rows.length} item${rows.length === 1 ? "" : "s"}`}
-        </span>
+        <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+          Show
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
+            className="rounded border px-2 py-1 text-sm"
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          per page
+        </label>
       </div>
 
       <Table>
@@ -78,7 +110,7 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
           <TableRow>
             <TableHead>Item</TableHead>
             <TableHead>Category</TableHead>
-            <TableHead className="text-right">Qty</TableHead>
+            <TableHead className="text-center">Qty</TableHead>
             <TableHead className="text-right">Price</TableHead>
             <TableHead>Status</TableHead>
             <TableHead />
@@ -105,20 +137,16 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
                   {row.category}
                 </Badge>
               </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {row.quantity}
+              <TableCell>
+                <QtyCell id={row.id} quantity={row.quantity} />
               </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {row.price !== null ? (
-                  <>
-                    ${row.price.toFixed(2)}
-                    <span className="ml-1 text-xs text-neutral-400">
-                      {row.priceSource === "market" ? "mkt" : "fixed"}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-red-500">unpriced</span>
-                )}
+              <TableCell className="text-right">
+                <PriceCell
+                  key={`${row.id}:${row.priceSource}:${row.price}`}
+                  id={row.id}
+                  price={row.price}
+                  priceSource={row.priceSource}
+                />
               </TableCell>
               <TableCell>
                 <Badge
@@ -161,6 +189,134 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
           )}
         </TableBody>
       </Table>
+
+      {filtered.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-neutral-500">
+          <span>
+            {start + 1}–{Math.min(start + pageSize, filtered.length)} of{" "}
+            {filtered.length}
+            {filter.trim() ? ` (filtered from ${rows.length})` : ""}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPage(Math.max(1, safePage - 1))}
+              disabled={safePage <= 1}
+              className="rounded border px-2.5 py-1 hover:bg-neutral-50 disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <span className="px-1 tabular-nums">
+              {safePage} / {pageCount}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(Math.min(pageCount, safePage + 1))}
+              disabled={safePage >= pageCount}
+              className="rounded border px-2.5 py-1 hover:bg-neutral-50 disabled:opacity-40"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QtyCell({ id, quantity }: { id: string; quantity: number }) {
+  const [pending, startTransition] = useTransition();
+  function set(next: number) {
+    if (next < 0 || next === quantity) return;
+    startTransition(async () => {
+      await setItemQuantity({ id, quantity: next });
+    });
+  }
+  return (
+    <div className="flex items-center justify-center gap-1">
+      <button
+        type="button"
+        onClick={() => set(quantity - 1)}
+        disabled={pending || quantity <= 0}
+        className="flex h-6 w-6 items-center justify-center rounded border text-base leading-none hover:bg-neutral-100 disabled:opacity-40"
+        aria-label="Decrease quantity"
+      >
+        −
+      </button>
+      <span
+        className={`w-8 text-center tabular-nums ${pending ? "opacity-50" : ""}`}
+      >
+        {quantity}
+      </span>
+      <button
+        type="button"
+        onClick={() => set(quantity + 1)}
+        disabled={pending}
+        className="flex h-6 w-6 items-center justify-center rounded border text-base leading-none hover:bg-neutral-100 disabled:opacity-40"
+        aria-label="Increase quantity"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
+function PriceCell({
+  id,
+  price,
+  priceSource,
+}: {
+  id: string;
+  price: number | null;
+  priceSource: "fixed" | "market" | null;
+}) {
+  // A fixed price shows in the field; a market-tracked one leaves it blank with
+  // the market value as the placeholder (typing a number pins a fixed price;
+  // clearing it reverts to tracking market).
+  // Remounted via `key` when the server sends a new price, so initial state is
+  // always fresh — no effect-based re-sync needed.
+  const initial = priceSource === "fixed" && price !== null ? String(price) : "";
+  const [value, setValue] = useState(initial);
+  const [pending, startTransition] = useTransition();
+
+  function commit() {
+    const trimmed = value.trim();
+    const next = trimmed === "" ? null : Number(trimmed);
+    if (next !== null && (Number.isNaN(next) || next < 0)) {
+      setValue(initial);
+      return;
+    }
+    // No change vs. what's stored (fixed value or cleared/market).
+    const storedFixed = priceSource === "fixed" && price !== null ? price : null;
+    if (next === storedFixed) return;
+    startTransition(async () => {
+      await setItemPrice({ id, askingPrice: next });
+    });
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <span className="text-neutral-400">$</span>
+      <input
+        type="number"
+        min={0}
+        step="1"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+        }}
+        placeholder={
+          price !== null ? price.toFixed(0) : "market"
+        }
+        className={`w-20 rounded border px-2 py-1 text-right text-sm tabular-nums ${
+          pending ? "opacity-50" : ""
+        }`}
+      />
+      <span className="w-8 text-left text-[10px] text-neutral-400">
+        {priceSource === "market" ? "mkt" : priceSource === "fixed" ? "fixed" : ""}
+      </span>
     </div>
   );
 }

@@ -107,6 +107,65 @@ export async function quickAddItem(
   return { added: product.name };
 }
 
+const setQtySchema = z.object({
+  id: z.string().uuid(),
+  quantity: z.coerce.number().int().min(0).max(9999),
+});
+
+/** Inline quantity edit from the inventory table (+/− buttons). */
+export async function setItemQuantity(
+  input: z.infer<typeof setQtySchema>,
+): Promise<{ error?: string }> {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const parsed = setQtySchema.safeParse(input);
+  if (!parsed.success) return { error: "Invalid quantity" };
+  await db
+    .update(tables.inventoryItems)
+    .set({ quantity: parsed.data.quantity, updatedAt: new Date() })
+    .where(
+      and(
+        eq(tables.inventoryItems.shopId, shopId),
+        eq(tables.inventoryItems.id, parsed.data.id),
+      ),
+    );
+  revalidatePath("/admin/inventory");
+  return {};
+}
+
+const setPriceSchema = z.object({
+  id: z.string().uuid(),
+  // null clears the fixed price → back to tracking market.
+  askingPrice: z.number().min(0).max(1_000_000).nullable(),
+});
+
+/** Inline price edit from the inventory table (sets a fixed asking price). */
+export async function setItemPrice(
+  input: z.infer<typeof setPriceSchema>,
+): Promise<{ error?: string }> {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const parsed = setPriceSchema.safeParse(input);
+  if (!parsed.success) return { error: "Invalid price" };
+  await db
+    .update(tables.inventoryItems)
+    .set({
+      askingPrice:
+        parsed.data.askingPrice === null
+          ? null
+          : parsed.data.askingPrice.toFixed(2),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(tables.inventoryItems.shopId, shopId),
+        eq(tables.inventoryItems.id, parsed.data.id),
+      ),
+    );
+  revalidatePath("/admin/inventory");
+  return {};
+}
+
 export async function createItem(
   _prev: ItemActionState,
   formData: FormData,

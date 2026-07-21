@@ -27,6 +27,7 @@ import {
   mapWithConcurrency,
   pickPrice,
   serializePrintings,
+  SYNCED_CATEGORIES,
 } from "../src/lib/tcgcsv";
 
 // Avoid fetch failures on Windows networks where unroutable IPv6 wins the
@@ -65,8 +66,15 @@ async function main() {
   let productsUpserted = 0;
 
   try {
-    const groups = await fetchGroups();
-    console.log(`Fetched ${groups.length} groups`);
+    // Pull every synced game's sets. Each TcgcsvGroup carries its own
+    // categoryId, so downstream product/price fetches read it off the group.
+    const groups: Awaited<ReturnType<typeof fetchGroups>> = [];
+    for (const cat of SYNCED_CATEGORIES) {
+      const catGroups = await fetchGroups(cat.id);
+      console.log(`Fetched ${catGroups.length} ${cat.label} groups`);
+      groups.push(...catGroups);
+    }
+    console.log(`Fetched ${groups.length} groups total`);
 
     const existing = await db
       .select({
@@ -82,6 +90,7 @@ async function main() {
         .values(
           batch.map((g) => ({
             id: g.groupId,
+            categoryId: g.categoryId,
             name: g.name,
             abbreviation: g.abbreviation,
             publishedOn: g.publishedOn?.slice(0, 10) ?? null,
@@ -92,6 +101,7 @@ async function main() {
         .onConflictDoUpdate({
           target: tables.catalogGroups.id,
           set: {
+            categoryId: sql`excluded.category_id`,
             name: sql`excluded.name`,
             abbreviation: sql`excluded.abbreviation`,
             publishedOn: sql`excluded.published_on`,
@@ -106,7 +116,7 @@ async function main() {
         !FULL && existingModified.get(group.groupId) === group.modifiedOn;
 
       if (!unchanged) {
-        const products = await fetchProducts(group.groupId);
+        const products = await fetchProducts(group.groupId, group.categoryId);
         for (const batch of chunk(products, BATCH_SIZE)) {
           await db
             .insert(tables.catalogProducts)
@@ -138,7 +148,7 @@ async function main() {
         }
       }
 
-      const prices = await fetchPrices(group.groupId);
+      const prices = await fetchPrices(group.groupId, group.categoryId);
       const byProduct = new Map<number, typeof prices>();
       for (const row of prices) {
         const list = byProduct.get(row.productId) ?? [];

@@ -147,14 +147,22 @@ export const shopSettings = pgTable(
 
 // ===== Catalog (mirrored from TCGCSV) =====
 
-export const catalogGroups = pgTable("catalog_groups", {
-  id: integer("id").primaryKey(), // tcgplayer groupId, natural key
-  name: text("name").notNull(),
-  abbreviation: text("abbreviation"),
-  publishedOn: date("published_on"),
-  modifiedOn: text("modified_on"), // raw TCGCSV timestamp, used for delta skipping
-  syncedAt: timestamp("synced_at", { withTimezone: true }),
-});
+export const catalogGroups = pgTable(
+  "catalog_groups",
+  {
+    id: integer("id").primaryKey(), // tcgplayer groupId, natural key
+    // TCGCSV/TCGplayer game category: 3 = Pokémon, 1 = Magic. A set belongs to
+    // exactly one game, so game is derived from the group. Existing rows
+    // backfill to Pokémon (see SYNCED_CATEGORIES in src/lib/tcgcsv.ts).
+    categoryId: integer("category_id").notNull().default(3),
+    name: text("name").notNull(),
+    abbreviation: text("abbreviation"),
+    publishedOn: date("published_on"),
+    modifiedOn: text("modified_on"), // raw TCGCSV timestamp, used for delta skipping
+    syncedAt: timestamp("synced_at", { withTimezone: true }),
+  },
+  (t) => [index("idx_groups_category").on(t.categoryId)],
+);
 
 export const catalogProducts = pgTable(
   "catalog_products",

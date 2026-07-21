@@ -1205,22 +1205,37 @@ function StepOurCase({
 }) {
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<CaseSort>("featured");
+  const [game, setGame] = useState<string>("all");
   const [type, setType] = useState<CaseType>("all");
   const [setName, setSetName] = useState<string>("all");
   const [maxPrice, setMaxPrice] = useState("");
   const [affordableOnly, setAffordableOnly] = useState(false);
 
   // Only surface filter options that actually exist in the case.
+  const availableGames = useMemo(
+    () =>
+      [...new Set(inventory.map((i) => i.game).filter(Boolean))].sort((a, b) =>
+        (a as string).localeCompare(b as string),
+      ) as string[],
+    [inventory],
+  );
   const availableTypes = useMemo(
     () => new Set(inventory.map((i) => i.category)),
     [inventory],
   );
+  // Sets narrow to the chosen game so the dropdown never offers a set that
+  // would return nothing under the current product-line filter.
   const availableSets = useMemo(
     () =>
-      [...new Set(inventory.map((i) => i.setName).filter(Boolean))].sort(
-        (a, b) => (a as string).localeCompare(b as string),
-      ) as string[],
-    [inventory],
+      [
+        ...new Set(
+          inventory
+            .filter((i) => game === "all" || i.game === game)
+            .map((i) => i.setName)
+            .filter(Boolean),
+        ),
+      ].sort((a, b) => (a as string).localeCompare(b as string)) as string[],
+    [inventory, game],
   );
 
   // Remaining credit = total built minus what's already picked out.
@@ -1230,6 +1245,7 @@ function StepOurCase({
   const remaining = Math.round((credit - selectedTotal) * 100) / 100;
 
   const filtersActive =
+    game !== "all" ||
     type !== "all" ||
     setName !== "all" ||
     maxPrice.trim() !== "" ||
@@ -1237,6 +1253,7 @@ function StepOurCase({
     sort !== "featured";
 
   function clearFilters() {
+    setGame("all");
     setType("all");
     setSetName("all");
     setMaxPrice("");
@@ -1254,6 +1271,7 @@ function StepOurCase({
           .includes(f),
       );
     }
+    if (game !== "all") list = list.filter((i) => i.game === game);
     if (type !== "all") list = list.filter((i) => i.category === type);
     if (setName !== "all") list = list.filter((i) => i.setName === setName);
     const max = maxPrice.trim() === "" ? null : Number(maxPrice);
@@ -1272,7 +1290,17 @@ function StepOurCase({
       sorted.sort((a, b) => a.price - b.price);
     }
     return sorted;
-  }, [inventory, filter, type, setName, maxPrice, affordableOnly, remaining, sort]);
+  }, [
+    inventory,
+    filter,
+    game,
+    type,
+    setName,
+    maxPrice,
+    affordableOnly,
+    remaining,
+    sort,
+  ]);
 
   const selectClass =
     "rounded-md bg-white/95 px-2 py-1.5 text-sm text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2";
@@ -1298,6 +1326,25 @@ function StepOurCase({
       {/* Streamlined filter/sort bar — client-side, instant */}
       {inventory.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
+          {availableGames.length > 1 && (
+            <select
+              aria-label="Product line"
+              value={game}
+              onChange={(e) => {
+                setGame(e.target.value);
+                setSetName("all"); // sets are game-specific
+              }}
+              className={selectClass}
+            >
+              <option value="all">All games</option>
+              {availableGames.map((g) => (
+                <option key={g} value={g}>
+                  {g}
+                </option>
+              ))}
+            </select>
+          )}
+
           <select
             aria-label="Sort"
             value={sort}

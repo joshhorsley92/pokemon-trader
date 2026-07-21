@@ -54,6 +54,8 @@ export type ShopItem = {
   setName: string | null;
   cardNumber: string | null;
   printing: string | null;
+  /** Game / product line: "Pokémon", "Magic", … (null for unlinked items) */
+  game: string | null;
 };
 
 export type WantLine = {

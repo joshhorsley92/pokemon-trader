@@ -127,6 +127,13 @@
       "when": 1784594840143,
       "tag": "0017_loud_namorita",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784649662150,
+      "tag": "0018_absent_bastion",
+      "breakpoints": true
     }
   ]
 }

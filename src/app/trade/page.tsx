@@ -47,6 +47,7 @@ export default async function TradePage({
     setName: l.setName,
     cardNumber: l.cardNumber,
     printing: l.printing,
+    game: l.game,
   }));
 
   return (

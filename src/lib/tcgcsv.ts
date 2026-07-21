@@ -9,6 +9,23 @@
 
 const BASE_URL = "https://tcgcsv.com/tcgplayer";
 export const POKEMON_CATEGORY_ID = 3;
+export const MAGIC_CATEGORY_ID = 1;
+
+/**
+ * TCGCSV game categories mirrored into our catalog, in display order. The id is
+ * TCGplayer's categoryId (the natural upstream key); the label is what the
+ * customer sees in the "Product line" filter. Add a row here — and re-run the
+ * sync — to bring another game online (e.g. Lorcana = 71).
+ */
+export const SYNCED_CATEGORIES = [
+  { id: POKEMON_CATEGORY_ID, label: "Pokémon" },
+  { id: MAGIC_CATEGORY_ID, label: "Magic" },
+] as const;
+
+/** Human game label for a stored category id; "Other" for anything unmapped. */
+export function gameLabel(categoryId: number | null | undefined): string {
+  return SYNCED_CATEGORIES.find((c) => c.id === categoryId)?.label ?? "Other";
+}
 
 // TCGCSV's usage guidelines require a versioned User-Agent ("Name/X.Y.Z");
 // unversioned agents get a 401.
@@ -81,16 +98,26 @@ async function fetchJson<T>(path: string, retries = 3): Promise<T[]> {
   throw lastError;
 }
 
-export function fetchGroups(): Promise<TcgcsvGroup[]> {
-  return fetchJson<TcgcsvGroup>(`${POKEMON_CATEGORY_ID}/groups`);
+// categoryId defaults to Pokémon so existing single-game callers keep working;
+// the sync passes it explicitly per game.
+export function fetchGroups(
+  categoryId: number = POKEMON_CATEGORY_ID,
+): Promise<TcgcsvGroup[]> {
+  return fetchJson<TcgcsvGroup>(`${categoryId}/groups`);
 }
 
-export function fetchProducts(groupId: number): Promise<TcgcsvProduct[]> {
-  return fetchJson<TcgcsvProduct>(`${POKEMON_CATEGORY_ID}/${groupId}/products`);
+export function fetchProducts(
+  groupId: number,
+  categoryId: number = POKEMON_CATEGORY_ID,
+): Promise<TcgcsvProduct[]> {
+  return fetchJson<TcgcsvProduct>(`${categoryId}/${groupId}/products`);
 }
 
-export function fetchPrices(groupId: number): Promise<TcgcsvPrice[]> {
-  return fetchJson<TcgcsvPrice>(`${POKEMON_CATEGORY_ID}/${groupId}/prices`);
+export function fetchPrices(
+  groupId: number,
+  categoryId: number = POKEMON_CATEGORY_ID,
+): Promise<TcgcsvPrice[]> {
+  return fetchJson<TcgcsvPrice>(`${categoryId}/${groupId}/prices`);
 }
 
 /**
@@ -121,7 +148,9 @@ export function classifyProduct(product: TcgcsvProduct): "singles" | "sealed" {
  */
 export function pickPrice(rows: TcgcsvPrice[]): TcgcsvPrice | undefined {
   if (rows.length <= 1) return rows[0];
-  const order = ["Normal", "Holofoil", "Reverse Holofoil"];
+  // Pokémon subtypes first, then MTG's "Foil" (harmless for Pokémon, which
+  // never carries that subtype; correct for a foil-only Magic printing).
+  const order = ["Normal", "Holofoil", "Reverse Holofoil", "Foil"];
   for (const subType of order) {
     const match = rows.find((r) => r.subTypeName === subType);
     if (match) return match;

@@ -64,6 +64,7 @@ export default async function BoothPage({
     setName: l.setName,
     cardNumber: l.cardNumber,
     printing: l.printing,
+    game: l.game,
   }));
 
   return (

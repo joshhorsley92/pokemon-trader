@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { db, tables } from "@/db";
 import type { AppSettings } from "@/lib/settings";
 import { dollarsUp } from "@/lib/pricing";
+import { gameLabel } from "@/lib/tcgcsv";
 
 export type InventoryListing = {
   id: string;
@@ -19,6 +20,8 @@ export type InventoryListing = {
   setName: string | null;
   cardNumber: string | null;
   printing: string | null;
+  /** Game / product line: "Pokémon", "Magic", … (null for unlinked items) */
+  game: string | null;
 };
 
 /**
@@ -72,6 +75,7 @@ export async function listInventory(
       marketPrice: tables.catalogProducts.marketPrice,
       imageUrl: tables.catalogProducts.imageUrl,
       setName: tables.catalogGroups.name,
+      categoryId: tables.catalogGroups.categoryId,
       cardNumber,
     })
     .from(tables.inventoryItems)
@@ -112,6 +116,7 @@ export async function listInventory(
       setName: row.setName,
       cardNumber: row.cardNumber,
       printing: row.printing,
+      game: row.productId === null ? null : gameLabel(row.categoryId),
     });
   }
   return listings;

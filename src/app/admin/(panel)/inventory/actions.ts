@@ -26,6 +26,9 @@ const itemSchema = z.object({
   title: z.string().min(1).max(300),
   category: z.enum(["singles", "sealed", "graded"]),
   condition: z.string().max(50).nullable(),
+  printing: z
+    .union([z.literal(""), z.string().max(60)])
+    .transform((v) => v || null),
   quantity: z.coerce.number().int().min(0).max(9999),
   askingPrice: z
     .union([z.literal(""), z.coerce.number().min(0).max(1_000_000)])
@@ -44,12 +47,64 @@ function parseItemForm(formData: FormData) {
     title: formData.get("title"),
     category: formData.get("category"),
     condition: formData.get("condition") || null,
+    printing: formData.get("printing") ?? "",
     quantity: formData.get("quantity"),
     askingPrice: formData.get("askingPrice") ?? "",
     photoUrl: formData.get("photoUrl") ?? "",
     productId: formData.get("productId") ?? "",
     status: formData.get("status") ?? "available",
   });
+}
+
+const quickAddSchema = z.object({
+  productId: z.number().int().positive(),
+  quantity: z.coerce.number().int().min(1).max(9999).default(1),
+  condition: z.string().max(50).nullish(),
+  printing: z.string().max(60).nullish(),
+  askingPrice: z.number().min(0).max(1_000_000).nullish(),
+});
+
+export type QuickAddState = { error?: string; added?: string };
+
+/**
+ * One-shot add from the catalog: everything the product already tells us
+ * (title, category) is derived server-side, so the operator only picks a card.
+ */
+export async function quickAddItem(
+  input: z.infer<typeof quickAddSchema>,
+): Promise<QuickAddState> {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const parsed = quickAddSchema.safeParse(input);
+  if (!parsed.success) return { error: "Invalid item" };
+  const { productId, quantity, condition, printing, askingPrice } = parsed.data;
+
+  const [product] = await db
+    .select({
+      name: tables.catalogProducts.name,
+      category: tables.catalogProducts.category,
+      categoryOverride: tables.catalogProducts.categoryOverride,
+    })
+    .from(tables.catalogProducts)
+    .where(eq(tables.catalogProducts.id, productId));
+  if (!product) return { error: "Card not found in catalog" };
+
+  const category = product.categoryOverride ?? product.category;
+  await db.insert(tables.inventoryItems).values({
+    shopId,
+    productId,
+    title: product.name,
+    category,
+    // Sealed/graded rows carry no card condition unless one is given.
+    condition: condition || null,
+    printing: printing || null,
+    quantity,
+    askingPrice: askingPrice == null ? null : askingPrice.toFixed(2),
+    status: "available",
+    source: "manual",
+  });
+  revalidatePath("/admin/inventory");
+  return { added: product.name };
 }
 
 export async function createItem(
@@ -68,6 +123,7 @@ export async function createItem(
     title: v.title,
     category: v.category,
     condition: v.condition,
+    printing: v.printing,
     quantity: v.quantity,
     askingPrice: v.askingPrice === null ? null : v.askingPrice.toFixed(2),
     photoUrl: v.photoUrl,
@@ -97,6 +153,7 @@ export async function updateItem(
       title: v.title,
       category: v.category,
       condition: v.condition,
+      printing: v.printing,
       quantity: v.quantity,
       askingPrice: v.askingPrice === null ? null : v.askingPrice.toFixed(2),
       photoUrl: v.photoUrl,

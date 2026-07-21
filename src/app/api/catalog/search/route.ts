@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, ilike, isNotNull, or, sql } from "drizzle-orm";
+import { and, ilike, or, sql } from "drizzle-orm";
 import { db, tables } from "@/db";
+import { LOW_VALUE_SEALED_PATTERNS } from "@/lib/manual-quote";
 import { getSettings } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
 import { bulkCutoff } from "@/lib/trade-import";
@@ -57,9 +58,19 @@ export async function GET(request: NextRequest) {
   const singlesOk = includeBelow
     ? singlesMember
     : sql`(${singlesMember} AND ${tables.catalogProducts.marketPrice} >= ${singlesFloor})`;
+  // Sealed with no market price isn't cheap — it's usually unlisted because
+  // it's scarce (vintage booster boxes). Surface it as a manual-quote lead
+  // rather than hiding it, minus the low-value tail. See lib/manual-quote.ts.
+  const notLowValue = sql.join(
+    LOW_VALUE_SEALED_PATTERNS.map(
+      (p) => sql`${tables.catalogProducts.name} NOT ILIKE ${p}`,
+    ),
+    sql` AND `,
+  );
+  const manualQuote = sql<boolean>`(${sealedMember} AND ${tables.catalogProducts.marketPrice} IS NULL AND ${notLowValue})`;
   const sealedOk = includeBelow
     ? sealedMember
-    : sql`(${sealedMember} AND ${tables.catalogProducts.marketPrice} >= ${settings.min_item_price})`;
+    : sql`((${sealedMember} AND ${tables.catalogProducts.marketPrice} >= ${settings.min_item_price}) OR ${manualQuote})`;
   const categoryFilter =
     category === "singles"
       ? singlesOk
@@ -93,6 +104,7 @@ export async function GET(request: NextRequest) {
       printings: tables.catalogProducts.printings,
       floor,
       belowFloor,
+      manualQuote,
     })
     .from(tables.catalogProducts)
     .innerJoin(
@@ -102,12 +114,16 @@ export async function GET(request: NextRequest) {
     .where(
       and(
         categoryFilter,
-        isNotNull(tables.catalogProducts.marketPrice),
+        // Unpriced rows are allowed through only when they qualify as a
+        // manual-quote lead; low-value unpriced junk stays hidden.
+        sql`(${tables.catalogProducts.marketPrice} IS NOT NULL OR ${manualQuote})`,
         ...conditions,
       ),
     )
     // Tradeable (above-floor) cards always rank before "below minimum" ones.
-    .orderBy(belowFloor, desc(tables.catalogProducts.marketPrice))
+    // NULLS LAST keeps manual-quote leads below real priced matches rather
+    // than letting Postgres float them to the top of a DESC sort.
+    .orderBy(belowFloor, sql`${tables.catalogProducts.marketPrice} DESC NULLS LAST`)
     .limit(20);
 
   return NextResponse.json({
@@ -117,6 +133,7 @@ export async function GET(request: NextRequest) {
       printings: r.printings ?? [],
       floor: Number(r.floor),
       belowFloor: Boolean(r.belowFloor),
+      manualQuote: Boolean(r.manualQuote),
     })),
   });
 }

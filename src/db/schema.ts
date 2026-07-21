@@ -319,6 +319,10 @@ export const inventoryItems = pgTable(
   title: text("title").notNull(),
   category: productCategory("category").notNull(),
   condition: text("condition"), // NM/LP/MP later; null for sealed
+  // Which TCGplayer printing/edition this copy is — "1st Edition Holofoil",
+  // "Unlimited", "Reverse Holofoil". Null when the product has one printing.
+  // Distinguishes an otherwise-identical card (1st Ed vs Unlimited Charizard).
+  printing: text("printing"),
   quantity: integer("quantity").notNull().default(1),
   // null = track market price (x markup setting); set = fixed asking price
   askingPrice: numeric("asking_price", { precision: 10, scale: 2 }),
@@ -406,6 +410,10 @@ export const submissionTradeInItems = pgTable("submission_trade_in_items", {
   graded: boolean("graded").notNull().default(false),
   grader: text("grader"), // PSA | CGC | BGS | TAG | SGC | Other
   grade: text("grade"), // "10", "9.5", … or free text for "Other"
+  // Sealed with no market price in the feed — which at the top end means
+  // scarce vintage (WOTC booster boxes), not cheap. Like `graded`, these are
+  // quoted by hand and carry 0 in the price columns until an admin counters.
+  manualQuote: boolean("manual_quote").notNull().default(false),
   conditionMultiplier: numeric("condition_multiplier", {
     precision: 4,
     scale: 3,

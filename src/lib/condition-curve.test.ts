@@ -9,6 +9,7 @@ import { computeQuote, type QuotableProduct } from "./pricing";
 
 const settings = {
   condition_curve: CURVE,
+  manual_review_threshold: 1000,
   rounding_step: 0.25,
   rounding_mode: "step" as const,
   fallback_percentage: 50,

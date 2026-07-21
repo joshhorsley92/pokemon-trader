@@ -36,6 +36,7 @@ type Item = {
   title: string;
   category: "singles" | "sealed" | "graded";
   condition: string | null;
+  printing: string | null;
   quantity: number;
   askingPrice: number | null;
   photoUrl: string | null;
@@ -123,7 +124,9 @@ export function ItemDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         {mode === "create" ? (
-          <Button>Add item</Button>
+          // The quick-add bar handles catalog cards; this dialog is the
+          // fallback for manual/oddball items and full field control.
+          <Button variant="outline">Manual / advanced</Button>
         ) : (
           <Button variant="ghost" size="sm">
             Edit
@@ -247,6 +250,16 @@ export function ItemDialog({
                 placeholder="blank = track market"
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="printing">Printing / edition</Label>
+            <Input
+              id="printing"
+              name="printing"
+              defaultValue={item?.printing ?? ""}
+              placeholder="e.g. 1st Edition Holofoil, Unlimited (blank if N/A)"
+            />
           </div>
 
           {/* Condition — scale follows the category */}

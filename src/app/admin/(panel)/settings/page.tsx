@@ -26,6 +26,7 @@ export default async function SettingsPage() {
           min_single_price: settings.min_single_price,
           bulk_rate_per_thousand: settings.bulk_rate_per_thousand,
           inventory_market_markup: settings.inventory_market_markup,
+          manual_review_threshold: settings.manual_review_threshold,
         }}
         conditionMultipliers={settings.condition_multipliers}
         analyzerEconomics={settings.analyzer_economics}

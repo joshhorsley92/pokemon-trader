@@ -57,7 +57,6 @@ export function TradeCounter({
   popularPicks,
   hotBuys,
   initialWantId,
-  quoteValidityDays,
   rounding,
   booth,
 }: {
@@ -66,7 +65,6 @@ export function TradeCounter({
   popularPicks: CatalogHit[];
   hotBuys: HotBuyDto[];
   initialWantId: string | null;
-  quoteValidityDays: number;
   rounding: RoundingSettings;
   /** When set, the builder submits into a live booth session instead of the
       async submissions queue — no contact form, lands as a pending trade. */
@@ -78,9 +76,9 @@ export function TradeCounter({
   // the screen. Desktop shows it as a full side column regardless.
   const [slipOpen, setSlipOpen] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [rateType, setRateType] = useState<"store_credit" | "cash">(
-    "store_credit",
-  );
+  // Credit is the only path now (the deal slip's "take cash for the remaining"
+  // checkbox handles cash-out) — fixed here, so no setter.
+  const [rateType] = useState<"store_credit" | "cash">("store_credit");
   const [tradeIn, setTradeIn] = useState<TradeInLine[]>([]);
   // Below-floor cards from a list import, paid flat per card
   const [bulkLot, setBulkLot] = useState<BulkLot | null>(null);
@@ -101,6 +99,31 @@ export function TradeCounter({
   useEffect(() => {
     startedAt.current = Date.now();
   }, []);
+
+  // Wire the wizard steps into browser history so the Back button returns to
+  // the previous step instead of leaving the page. Each forward move pushes a
+  // history entry; Back (browser or in-app) pops it, and popstate syncs state.
+  useEffect(() => {
+    window.history.replaceState({ tcStep: 1 }, "");
+    function onPop(e: PopStateEvent) {
+      const s = (e.state as { tcStep?: number } | null)?.tcStep;
+      setStep(s === 2 || s === 3 ? s : 1);
+    }
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  /** Navigate between wizard steps, keeping browser history in sync. */
+  function goStep(target: 1 | 2 | 3) {
+    if (target === step) return;
+    if (target > step) {
+      window.history.pushState({ tcStep: target }, "");
+      setStep(target);
+    } else {
+      // Pop the right number of entries; popstate updates `step`.
+      window.history.go(target - step);
+    }
+  }
 
   // Live quote: recompute server-side whenever the counter changes
   useEffect(() => {
@@ -383,6 +406,7 @@ export function TradeCounter({
               setTradeIn([]);
               setWants([]);
               setQuote(null);
+              window.history.replaceState({ tcStep: 1 }, "");
               setStep(1);
               setBoothDone(false);
             }}
@@ -405,7 +429,7 @@ export function TradeCounter({
               {i > 0 && <span className="mx-1 text-emerald-200/40">—</span>}
               <button
                 type="button"
-                onClick={() => setStep(s.n)}
+                onClick={() => goStep(s.n)}
                 className={`rounded-full px-3 py-1 font-medium transition-colors ${
                   step === s.n
                     ? "bg-[var(--manila)] text-[var(--ink)]"
@@ -426,7 +450,6 @@ export function TradeCounter({
             rateType={rateType}
             popularPicks={popularPicks}
             hotBuys={hotBuys}
-            onRateType={setRateType}
             onAdd={addTradeIn}
             onQty={setTradeInQty}
             onLine={setLineAt}
@@ -438,7 +461,7 @@ export function TradeCounter({
               setTradeIn([]);
               setBulkLot(null);
             }}
-            onNext={() => setStep(2)}
+            onNext={() => goStep(2)}
             booth={!!booth}
           />
         )}
@@ -448,8 +471,8 @@ export function TradeCounter({
             wants={wants}
             onToggle={toggleWant}
             onQty={setWantQty}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
+            onBack={() => goStep(1)}
+            onNext={() => goStep(3)}
           />
         )}
         {step === 3 && (
@@ -465,7 +488,7 @@ export function TradeCounter({
             submitError={submitError}
             photos={photos}
             onPhotos={setPhotos}
-            onBack={() => setStep(2)}
+            onBack={() => goStep(2)}
             onSubmit={submit}
             booth={!!booth}
           />
@@ -516,7 +539,8 @@ export function TradeCounter({
               rateType={rateType}
               cashRemainder={cashRemainder}
               onCashRemainder={setCashRemainder}
-              quoteValidityDays={quoteValidityDays}
+              onRemoveTradeIn={(idx) => setTradeInQty(idx, 0)}
+              onRemoveWant={(itemId) => setWantQty(itemId, 0)}
               rounding={rounding}
             />
             {/* The next move lives right under the running total — spend
@@ -525,7 +549,7 @@ export function TradeCounter({
               (tradeIn.length > 0 || bulkLotCount(bulkLot) > 0) && (
                 <button
                   type="button"
-                  onClick={() => setStep(2)}
+                  onClick={() => goStep(2)}
                   className="mt-2 w-full rounded-md bg-[var(--tag)] px-4 py-2.5 font-display text-base font-bold text-[var(--ink)] shadow-lg transition-transform hover:-translate-y-0.5"
                 >
                   Browse our case →
@@ -547,7 +571,6 @@ function StepTradeIn({
   rateType,
   popularPicks,
   hotBuys,
-  onRateType,
   onAdd,
   onQty,
   onLine,
@@ -565,7 +588,6 @@ function StepTradeIn({
   rateType: "store_credit" | "cash";
   popularPicks: CatalogHit[];
   hotBuys: HotBuyDto[];
-  onRateType: (r: "store_credit" | "cash") => void;
   onAdd: (p: CatalogHit) => void;
   onQty: (idx: number, qty: number) => void;
   onLine: (idx: number, patch: Partial<TradeInLine>) => void;
@@ -619,42 +641,6 @@ function StepTradeIn({
         any card by name. Prices come straight from the market, updated daily.
       </p>
 
-      <div className="mt-4 flex gap-2 rounded-md bg-emerald-950/40 p-1 text-sm">
-        {(
-          [
-            ["store_credit", "Trade-in Credit"],
-            ["cash", "Cash Offer"],
-          ] as const
-        ).map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => onRateType(value)}
-            className={`flex-1 rounded px-3 py-1.5 font-medium transition-colors ${
-              rateType === value
-                ? "bg-[var(--manila)] text-[var(--ink)]"
-                : "text-emerald-100/70 hover:text-white"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Gentle push toward trade: only shown when cash is selected and trade
-          would genuinely pay more (both totals come free with the quote). */}
-      {rateType === "cash" &&
-        quote?.totals &&
-        quote.totals.store_credit > quote.totals.cash && (
-          <p className="mt-1.5 text-xs text-emerald-100/80">
-            💚 You get{" "}
-            <span className="font-semibold text-emerald-50">
-              {money(quote.totals.store_credit - quote.totals.cash)} more
-            </span>{" "}
-            with Trade!
-          </p>
-        )}
-
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <input
           type="search"
@@ -673,6 +659,9 @@ function StepTradeIn({
         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
           {hits.map((hit) => {
             const below = hit.belowFloor === true;
+            // Sealed we have no market price for — scarce vintage, usually.
+            // Addable, but priced by a person rather than instantly.
+            const manual = hit.manualQuote === true && !below;
             return (
               <li key={hit.id}>
                 <button
@@ -681,7 +670,9 @@ function StepTradeIn({
                   title={
                     below
                       ? `Below our ${money(hit.floor ?? 0)} trade-in minimum`
-                      : undefined
+                      : manual
+                        ? "We price this one by hand — add it and we'll send you an offer"
+                        : undefined
                   }
                   onClick={() => {
                     if (below) return;
@@ -723,6 +714,11 @@ function StepTradeIn({
                     {below && (
                       <span className="mt-0.5 block text-[11px] font-medium text-red-600/80">
                         Below {money(hit.floor ?? 0)} value — no trade-in credit
+                      </span>
+                    )}
+                    {manual && (
+                      <span className="mt-0.5 block text-[11px] font-medium text-amber-700">
+                        Rare — we&rsquo;ll quote this one by hand
                       </span>
                     )}
                   </span>
@@ -1233,39 +1229,54 @@ function StepOurCase({
       ) : (
         <div className="case-frame mt-4">
           <div className="case-glass p-4 sm:p-5">
-            <ul className="relative z-[2] grid gap-x-3 gap-y-6 sm:grid-cols-2 xl:grid-cols-3">
+            <ul className="relative z-[2] grid gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
           {shown.map((item) => {
             const want = wants.find((w) => w.item.id === item.id);
             const img = item.photoUrl ?? item.imageUrl;
             return (
               <li
                 key={item.id}
-                className={`shelf-item rounded-md bg-white/95 p-3 shadow-[0_12px_16px_-9px_rgba(0,0,0,0.55)] transition-shadow ${
+                className={`shelf-item rounded-md bg-white/95 p-2.5 shadow-[0_12px_16px_-9px_rgba(0,0,0,0.55)] transition-shadow ${
                   want ? "ring-2 ring-[var(--tag)]" : ""
                 }`}
               >
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-2.5">
                   {img ? (
                     <Image
                       src={img}
                       alt=""
-                      width={56}
-                      height={56}
-                      className="h-14 w-14 shrink-0 rounded object-contain"
+                      width={48}
+                      height={48}
+                      className="h-12 w-12 shrink-0 rounded object-contain"
                       unoptimized
                     />
                   ) : (
-                    <div className="h-14 w-14 shrink-0 rounded bg-neutral-100" />
+                    <div className="h-12 w-12 shrink-0 rounded bg-neutral-100" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium leading-snug text-[var(--ink)]">
+                    <p className="truncate text-sm font-medium leading-snug text-[var(--ink)]">
                       {item.title}
                     </p>
-                    <p className="mt-0.5 text-xs text-neutral-500">
+                    {(item.setName || item.cardNumber || item.printing) && (
+                      <p className="truncate text-[11px] leading-tight text-neutral-500">
+                        {[
+                          item.setName,
+                          item.cardNumber ? `#${item.cardNumber}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        {item.printing && (
+                          <span className="ml-1 font-semibold text-emerald-700">
+                            {item.printing}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                    <p className="text-[11px] leading-tight text-neutral-500">
                       {item.condition ? `${item.condition} · ` : ""}
-                      {item.quantity > 1 ? `${item.quantity} in stock` : "1 in stock"}
+                      {item.quantity} in stock
                     </p>
-                    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
+                    <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
                       <span className="price-tag text-xs">{money(item.price)}</span>
                       {want ? (
                         <span className="flex shrink-0 items-center gap-1">

@@ -264,8 +264,10 @@ export async function POST(request: NextRequest) {
       hotBuyBonus: line.hotBuyBonus.toFixed(2),
       unitCredit: toMoneyString(line.unitCredit),
     }));
-    // Graded slabs: stored with zeroed pricing + graded flag; the admin sets a
-    // custom offer via the counter flow.
+    // Manually-quoted lines: stored with zeroed pricing; the admin sets a
+    // custom offer via the counter flow. Two kinds — graded slabs, and sealed
+    // with no market price (usually scarce vintage). They're flagged
+    // separately so a booster box isn't displayed as a slab.
     const gradedRows = quote.manualLines.map((line) => ({
       submissionId: submission.id,
       productId: line.productId,
@@ -279,7 +281,8 @@ export async function POST(request: NextRequest) {
       appliedRuleId: null,
       hotBuyBonus: "0",
       unitCredit: "0",
-      graded: true,
+      graded: line.reason === "graded",
+      manualQuote: line.reason === "unpriced",
       grader: line.grader,
       grade: line.grade,
     }));
@@ -332,16 +335,25 @@ export async function POST(request: NextRequest) {
 
   const itemSummary = [
     "They are trading in:",
-    ...quote.lines.map(
-      (l) =>
-        `  ${l.quantity}× ${l.productName}${l.printing ? ` [${l.printing}]` : ""}${l.condition ? ` (${l.condition})` : ""} — $${l.unitCredit.toFixed(2)} each${l.hotBuyBonus > 0 ? ` [HOT BUY +${l.hotBuyBonus}%]` : ""}`,
-    ),
+    ...quote.lines.map((l) => {
+      const flags = [
+        l.hotBuyBonus > 0 ? ` [HOT BUY +${l.hotBuyBonus}%]` : "",
+        l.reviewReasons.includes("high_value")
+          ? " [TEAM QUOTE — payout over cap; estimate only, finalize by hand]"
+          : "",
+        l.reviewReasons.includes("off_condition")
+          ? " [CHECK CONDITION — off-condition, slow mover]"
+          : "",
+      ].join("");
+      return `  ${l.quantity}× ${l.productName}${l.printing ? ` [${l.printing}]` : ""}${l.condition ? ` (${l.condition})` : ""} — $${l.unitCredit.toFixed(2)} each${flags}`;
+    }),
     ...(quote.manualLines.length > 0
       ? [
-          "Graded — NEEDS CUSTOM OFFER:",
-          ...quote.manualLines.map(
-            (l) =>
-              `  ${l.quantity}× ${l.productName}${l.printing ? ` [${l.printing}]` : ""} — ${l.grader ?? "?"} ${l.grade ?? "?"}${l.refMarketPrice !== null ? ` (raw mkt ~$${l.refMarketPrice.toFixed(2)})` : ""}`,
+          "NEEDS CUSTOM OFFER:",
+          ...quote.manualLines.map((l) =>
+            l.reason === "graded"
+              ? `  ${l.quantity}× ${l.productName}${l.printing ? ` [${l.printing}]` : ""} — graded ${l.grader ?? "?"} ${l.grade ?? "?"}${l.refMarketPrice !== null ? ` (raw mkt ~$${l.refMarketPrice.toFixed(2)})` : ""}`
+              : `  ${l.quantity}× ${l.productName}${l.printing ? ` [${l.printing}]` : ""} — sealed, no market price (often scarce vintage — value it by hand)`,
           ),
         ]
       : []),

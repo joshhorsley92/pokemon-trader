@@ -61,6 +61,9 @@ export default async function BoothPage({
     price: l.price,
     photoUrl: l.photoUrl,
     imageUrl: l.imageUrl,
+    setName: l.setName,
+    cardNumber: l.cardNumber,
+    printing: l.printing,
   }));
 
   return (
@@ -77,7 +80,6 @@ export default async function BoothPage({
         popularPicks={popularPicks}
         hotBuys={hotBuys}
         initialWantId={null}
-        quoteValidityDays={settings.quote_validity_days}
         rounding={{
           rounding_mode: settings.rounding_mode,
           rounding_step: settings.rounding_step,

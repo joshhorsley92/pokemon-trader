@@ -113,6 +113,20 @@
       "when": 1784562143132,
       "tag": "0015_bulk-lot-snapshot",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784574160844,
+      "tag": "0016_lying_gunslinger",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784594840143,
+      "tag": "0017_loud_namorita",
+      "breakpoints": true
     }
   ]
 }

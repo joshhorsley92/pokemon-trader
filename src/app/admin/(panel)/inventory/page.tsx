@@ -1,20 +1,13 @@
 import Link from "next/link";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { getSettings } from "@/lib/settings";
 import { effectiveInventoryPrice } from "@/lib/inventory";
 import { getCurrentShopId } from "@/lib/tenant";
-import { ItemDialog, DeleteItemButton } from "./item-forms";
+import { ItemDialog } from "./item-forms";
+import { InventoryTable, type InventoryRow } from "./inventory-table";
+import { QuickAdd } from "./quick-add";
 import { setInventoryMarkup } from "./actions";
 
 export const metadata = { title: "Inventory" };
@@ -29,6 +22,7 @@ export default async function InventoryPage() {
       title: tables.inventoryItems.title,
       category: tables.inventoryItems.category,
       condition: tables.inventoryItems.condition,
+      printing: tables.inventoryItems.printing,
       quantity: tables.inventoryItems.quantity,
       askingPrice: tables.inventoryItems.askingPrice,
       photoUrl: tables.inventoryItems.photoUrl,
@@ -36,14 +30,54 @@ export default async function InventoryPage() {
       productId: tables.inventoryItems.productId,
       source: tables.inventoryItems.source,
       marketPrice: tables.catalogProducts.marketPrice,
+      setName: tables.catalogGroups.name,
+      cardNumber: sql<string | null>`(
+        SELECT e->>'value' FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(${tables.catalogProducts.extData}) = 'array'
+               THEN ${tables.catalogProducts.extData} ELSE '[]'::jsonb END
+        ) e WHERE e->>'name' = 'Number' LIMIT 1
+      )`,
     })
     .from(tables.inventoryItems)
     .leftJoin(
       tables.catalogProducts,
       eq(tables.catalogProducts.id, tables.inventoryItems.productId),
     )
+    .leftJoin(
+      tables.catalogGroups,
+      eq(tables.catalogGroups.id, tables.catalogProducts.groupId),
+    )
     .where(eq(tables.inventoryItems.shopId, shopId))
     .orderBy(tables.inventoryItems.createdAt);
+
+  // Price every row once here (server-side), then hand plain data to the
+  // client table so filtering stays instant.
+  const priceOf = (row: (typeof rows)[number]) =>
+    effectiveInventoryPrice(
+      row.askingPrice === null ? null : Number(row.askingPrice),
+      row.marketPrice === null ? null : Number(row.marketPrice),
+      settings.inventory_market_markup,
+    );
+
+  const tableRows: InventoryRow[] = rows.map((row) => {
+    const priced = priceOf(row);
+    return {
+      id: row.id,
+      title: row.title,
+      category: row.category,
+      condition: row.condition,
+      printing: row.printing,
+      quantity: row.quantity,
+      askingPrice: row.askingPrice === null ? null : Number(row.askingPrice),
+      photoUrl: row.photoUrl,
+      status: row.status,
+      productId: row.productId,
+      setName: row.setName,
+      cardNumber: row.cardNumber,
+      price: priced?.price ?? null,
+      priceSource: priced?.source ?? null,
+    };
+  });
 
   // Total retail value of sellable stock (available items at their sell price).
   let totalValueCents = 0;
@@ -51,11 +85,7 @@ export default async function InventoryPage() {
   let unpricedItems = 0;
   for (const row of rows) {
     if (row.status !== "available") continue;
-    const priced = effectiveInventoryPrice(
-      row.askingPrice === null ? null : Number(row.askingPrice),
-      row.marketPrice === null ? null : Number(row.marketPrice),
-      settings.inventory_market_markup,
-    );
+    const priced = priceOf(row);
     if (!priced) {
       unpricedItems += 1; // unmatched/unpriced rows are excluded from the total
       continue;
@@ -137,96 +167,9 @@ export default async function InventoryPage() {
         </form>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Item</TableHead>
-            <TableHead>Category</TableHead>
-            <TableHead className="text-right">Qty</TableHead>
-            <TableHead className="text-right">Price</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((row) => {
-            const priced = effectiveInventoryPrice(
-              row.askingPrice === null ? null : Number(row.askingPrice),
-              row.marketPrice === null ? null : Number(row.marketPrice),
-              settings.inventory_market_markup,
-            );
-            return (
-              <TableRow key={row.id}>
-                <TableCell className="max-w-md truncate font-medium">
-                  {row.title}
-                  {row.condition && (
-                    <span className="ml-2 text-xs text-neutral-400">
-                      {row.condition}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="secondary" className="capitalize">
-                    {row.category}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {row.quantity}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {priced ? (
-                    <>
-                      ${priced.price.toFixed(2)}
-                      <span className="ml-1 text-xs text-neutral-400">
-                        {priced.source === "market" ? "mkt" : "fixed"}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-red-500">unpriced</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={row.status === "available" ? "default" : "outline"}
-                    className="capitalize"
-                  >
-                    {row.status}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <ItemDialog
-                      mode="edit"
-                      item={{
-                        id: row.id,
-                        title: row.title,
-                        category: row.category,
-                        condition: row.condition,
-                        quantity: row.quantity,
-                        askingPrice:
-                          row.askingPrice === null
-                            ? null
-                            : Number(row.askingPrice),
-                        photoUrl: row.photoUrl,
-                        productId: row.productId,
-                        status: row.status,
-                      }}
-                    />
-                    <DeleteItemButton id={row.id} />
-                  </div>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-          {rows.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-neutral-500">
-                No inventory yet. Add items manually or import a Collectr CSV.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+      <QuickAdd />
+
+      <InventoryTable rows={tableRows} />
     </div>
   );
 }

@@ -44,6 +44,9 @@ export default async function TradePage({
     price: l.price,
     photoUrl: l.photoUrl,
     imageUrl: l.imageUrl,
+    setName: l.setName,
+    cardNumber: l.cardNumber,
+    printing: l.printing,
   }));
 
   return (
@@ -63,7 +66,6 @@ export default async function TradePage({
         popularPicks={popularPicks}
         hotBuys={hotBuys}
         initialWantId={want ?? null}
-        quoteValidityDays={settings.quote_validity_days}
         rounding={{
           rounding_mode: settings.rounding_mode,
           rounding_step: settings.rounding_step,

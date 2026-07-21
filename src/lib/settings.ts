@@ -48,6 +48,13 @@ export type AppSettings = {
   low_value_tiers: LowValueTier[];
   /** Markup multiplier applied to market price for inventory items without a fixed asking price, e.g. 1.0 = market */
   inventory_market_markup: number;
+  /**
+   * Per-unit payout (credit or cash) at or above which a trade-in line is
+   * flagged for a team member to finalize by hand instead of standing as an
+   * instant quote. The calculator's estimate is still shown as a ballpark —
+   * the flag governs handling, not the number. 0 disables the cap.
+   */
+  manual_review_threshold: number;
   /** Shop display name used on public pages and emails */
   shop_name: string;
   /**
@@ -82,6 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     { min: 8.5, max: 9.99, payout: 3 },
   ],
   inventory_market_markup: 1.0,
+  manual_review_threshold: 1000,
   shop_name: "RareFind TCG Trader",
   condition_multipliers: DEFAULT_CONDITION_MULTIPLIERS,
   condition_curve: DEFAULT_CONDITION_CURVE,

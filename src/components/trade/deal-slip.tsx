@@ -64,6 +64,27 @@ function SectionToggle({
   );
 }
 
+/** Small ✕ to pull a line off the slip on a change of mind. */
+function RemoveButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-neutral-300 hover:bg-red-50 hover:text-red-500"
+    >
+      ✕
+    </button>
+  );
+}
+
 export function DealSlip({
   shopName,
   tradeIn,
@@ -74,7 +95,8 @@ export function DealSlip({
   rateType,
   cashRemainder,
   onCashRemainder,
-  quoteValidityDays,
+  onRemoveTradeIn,
+  onRemoveWant,
   rounding,
 }: {
   shopName: string;
@@ -86,7 +108,8 @@ export function DealSlip({
   rateType: "store_credit" | "cash";
   cashRemainder: boolean;
   onCashRemainder: (v: boolean) => void;
-  quoteValidityDays: number;
+  onRemoveTradeIn: (idx: number) => void;
+  onRemoveWant: (itemId: string) => void;
   rounding: RoundingSettings;
 }) {
   // Sections start abbreviated — totals only — until expanded with the +.
@@ -148,6 +171,10 @@ export function DealSlip({
                 );
                 const showPrinting =
                   line.printing && line.product.printings.length > 1;
+                // Big payouts are finalized by a team member — customers only
+                // ever see this reason, not the staff-side condition check.
+                const teamQuote =
+                  quoted?.reviewReasons?.includes("high_value") ?? false;
                 return (
                   <li key={idx} className="flex justify-between gap-2">
                     <span className="min-w-0 flex-1 break-words leading-snug">
@@ -167,14 +194,27 @@ export function DealSlip({
                             · 🔥 hot buy +{quoted.hotBuyBonus}%
                           </span>
                         )}
+                        {teamQuote && (
+                          <span className="mt-0.5 block font-medium text-amber-700">
+                            Large trade — a team member finalizes this offer
+                          </span>
+                        )}
                       </span>
                     </span>
-                    <span className="whitespace-nowrap tabular-nums">
-                      {line.graded
-                        ? "custom offer"
-                        : quoted
-                          ? money(quoted.lineCredit)
-                          : "…"}
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="tabular-nums">
+                        {line.graded
+                          ? "custom offer"
+                          : quoted
+                            ? teamQuote
+                              ? `~${money(quoted.lineCredit)}`
+                              : money(quoted.lineCredit)
+                            : "…"}
+                      </span>
+                      <RemoveButton
+                        label={`Remove ${line.product.name}`}
+                        onClick={() => onRemoveTradeIn(idx)}
+                      />
                     </span>
                   </li>
                 );
@@ -226,8 +266,14 @@ export function DealSlip({
                     <span className="min-w-0 flex-1 break-words leading-snug">
                       {w.quantity}× {w.item.title}
                     </span>
-                    <span className="whitespace-nowrap tabular-nums">
-                      {money(w.item.price * w.quantity)}
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                      <span className="tabular-nums">
+                        {money(w.item.price * w.quantity)}
+                      </span>
+                      <RemoveButton
+                        label={`Remove ${w.item.title}`}
+                        onClick={() => onRemoveWant(w.item.id)}
+                      />
                     </span>
                   </li>
                 ))}
@@ -258,12 +304,6 @@ export function DealSlip({
                 {money(showCashRemainder ? remainderCash : Math.abs(balance))}
               </span>
             </div>
-            {balance < 0 && (
-              <p className="mt-1 hidden text-[11px] leading-snug text-neutral-500 lg:block">
-                That&apos;s fine — propose it anyway and we&apos;ll settle the
-                difference when we talk.
-              </p>
-            )}
             {offerCashRemainder && (
               <label className="mt-1.5 flex cursor-pointer items-start gap-2 border-t border-neutral-200 pt-1.5 text-[12px] leading-snug">
                 <input
@@ -285,7 +325,7 @@ export function DealSlip({
         </div>
 
         <p className="mt-3 hidden text-center text-[11px] text-neutral-400 lg:block">
-          quote good for {quoteValidityDays} days · all trades reviewed by a human
+          all trades reviewed by a human
         </p>
       </div>
       <div className="deal-slip-tear hidden lg:block" />

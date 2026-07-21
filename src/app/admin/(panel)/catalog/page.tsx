@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { and, desc, eq, ilike, isNotNull, sql, type SQL } from "drizzle-orm";
+import { and, eq, ilike, sql, type SQL } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,7 +36,9 @@ export default async function CatalogPage({
   for (const token of q.trim().split(/\s+/).filter(Boolean).slice(0, 8)) {
     conditions.push(ilike(tables.catalogProducts.name, `%${token}%`));
   }
-  conditions.push(isNotNull(tables.catalogProducts.marketPrice));
+  // No market-price filter: the feed omits prices for products with no live
+  // listings, which at the top end means scarce vintage sealed. Hiding those
+  // made the most valuable trade-ins unfindable in admin. Price renders "—".
 
   const rows = await db
     .select({
@@ -55,7 +57,7 @@ export default async function CatalogPage({
       eq(tables.catalogGroups.id, tables.catalogProducts.groupId),
     )
     .where(and(...conditions))
-    .orderBy(desc(tables.catalogProducts.marketPrice))
+    .orderBy(sql`${tables.catalogProducts.marketPrice} DESC NULLS LAST`)
     .limit(PAGE_SIZE)
     .offset((pageNum - 1) * PAGE_SIZE);
 

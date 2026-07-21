@@ -1,0 +1,1 @@
+ALTER TABLE "submission_trade_in_items" ADD COLUMN "manual_quote" boolean DEFAULT false NOT NULL;

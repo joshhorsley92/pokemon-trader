@@ -87,7 +87,9 @@ export default async function SubmissionDetailPage({
       quantity: i.quantity,
       condition: i.condition,
       printing: i.printing,
-      graded: i.graded,
+      // Manually-quoted sealed has no market price either, so it's excluded
+      // from the resale projection for the same reason slabs are.
+      graded: i.graded || i.manualQuote,
     })),
     settings,
   ).catch(() => null);
@@ -225,6 +227,15 @@ export default async function SubmissionDetailPage({
                 const then = Number(item.unitMarketPrice);
                 const deltaPct = now !== null && then > 0 ? ((now - then) / then) * 100 : 0;
                 const bigDelta = Math.abs(deltaPct) >= 5;
+                // High-value cap: per-unit estimate at/above the threshold is
+                // finalized by hand. Derived from the stored payout, so no
+                // extra column needed. Graded/manual lines carry $0 here and
+                // have their own flags, so exclude them.
+                const highValue =
+                  !item.graded &&
+                  !item.manualQuote &&
+                  settings.manual_review_threshold > 0 &&
+                  Number(item.unitCredit) >= settings.manual_review_threshold;
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="max-w-sm whitespace-normal font-medium">
@@ -240,9 +251,33 @@ export default async function SubmissionDetailPage({
                           OFFER
                         </span>
                       )}
+                      {item.manualQuote && (
+                        <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800">
+                          NO MARKET PRICE · CUSTOM OFFER
+                        </span>
+                      )}
+                      {highValue && (
+                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                          OVER {money(settings.manual_review_threshold)} · TEAM
+                          QUOTE
+                        </span>
+                      )}
                       {item.printing && (
                         <span className="block text-xs font-normal text-neutral-500">
                           {item.printing}
+                        </span>
+                      )}
+                      {item.manualQuote && (
+                        <span className="block text-xs font-normal text-violet-700">
+                          Sealed with no listings — often scarce vintage. Check
+                          auction comps before offering.
+                        </span>
+                      )}
+                      {highValue && (
+                        <span className="block text-xs font-normal text-amber-800">
+                          Payout over the {money(settings.manual_review_threshold)}{" "}
+                          cap. Estimate shown is a ballpark — confirm before
+                          countering.
                         </span>
                       )}
                       {!item.graded && item.condition && (

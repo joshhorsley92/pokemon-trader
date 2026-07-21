@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, tables } from "@/db";
 import type { AppSettings } from "@/lib/settings";
 import { dollarsUp } from "@/lib/pricing";
@@ -14,6 +14,11 @@ export type InventoryListing = {
   photoUrl: string | null;
   imageUrl: string | null; // linked catalog image
   status: "available" | "reserved" | "sold" | "hidden";
+  productId: number | null;
+  /** Identifying detail from the linked catalog product */
+  setName: string | null;
+  cardNumber: string | null;
+  printing: string | null;
 };
 
 /**
@@ -45,23 +50,38 @@ export async function listInventory(
   settings: AppSettings,
   opts: { availableOnly?: boolean } = {},
 ): Promise<InventoryListing[]> {
+  const cardNumber = sql<string | null>`(
+    SELECT e->>'value' FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(${tables.catalogProducts.extData}) = 'array'
+           THEN ${tables.catalogProducts.extData} ELSE '[]'::jsonb END
+    ) e WHERE e->>'name' = 'Number' LIMIT 1
+  )`;
+
   const rows = await db
     .select({
       id: tables.inventoryItems.id,
       title: tables.inventoryItems.title,
       category: tables.inventoryItems.category,
       condition: tables.inventoryItems.condition,
+      printing: tables.inventoryItems.printing,
       quantity: tables.inventoryItems.quantity,
       askingPrice: tables.inventoryItems.askingPrice,
       photoUrl: tables.inventoryItems.photoUrl,
       status: tables.inventoryItems.status,
+      productId: tables.inventoryItems.productId,
       marketPrice: tables.catalogProducts.marketPrice,
       imageUrl: tables.catalogProducts.imageUrl,
+      setName: tables.catalogGroups.name,
+      cardNumber,
     })
     .from(tables.inventoryItems)
     .leftJoin(
       tables.catalogProducts,
       eq(tables.catalogProducts.id, tables.inventoryItems.productId),
+    )
+    .leftJoin(
+      tables.catalogGroups,
+      eq(tables.catalogGroups.id, tables.catalogProducts.groupId),
     )
     .where(eq(tables.inventoryItems.shopId, shopId))
     .orderBy(tables.inventoryItems.createdAt);
@@ -88,6 +108,10 @@ export async function listInventory(
       photoUrl: row.photoUrl,
       imageUrl: row.imageUrl,
       status: row.status,
+      productId: row.productId,
+      setName: row.setName,
+      cardNumber: row.cardNumber,
+      printing: row.printing,
     });
   }
   return listings;

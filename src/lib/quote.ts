@@ -5,13 +5,16 @@
  * Two kinds of trade-in line:
  *  - raw cards — auto-priced. The customer's chosen printing selects which of
  *    the product's per-printing prices to quote against.
- *  - graded slabs — NOT auto-priced (free data can't value slabs). These come
- *    back as `manualLines` for an admin to make a custom offer on; they don't
- *    count toward the quote total.
+ *  - manual lines — NOT auto-priced. These come back as `manualLines` for an
+ *    admin to make a custom offer on; they don't count toward the quote
+ *    total. Two things land here: graded slabs (free data can't value slabs)
+ *    and unpriced sealed (see lib/manual-quote.ts — the feed's price gap
+ *    covers vintage booster boxes, so "no price" often means "very valuable").
  */
 import { and, eq, inArray, or } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { hotBuyBonuses } from "@/lib/hot-buys";
+import { isManualQuoteCandidate } from "@/lib/manual-quote";
 import {
   computeQuote,
   dollarsDown,
@@ -44,6 +47,11 @@ export type ManualLine = {
   quantity: number;
   /** Raw printing market price, for admin reference only (not an offer) */
   refMarketPrice: number | null;
+  /**
+   * Why this needs a human. 'graded' = slab; 'unpriced' = no market price in
+   * the feed, which for sealed skews toward high-value vintage.
+   */
+  reason: "graded" | "unpriced";
 };
 
 export type DbQuote = Quote & { manualLines: ManualLine[] };
@@ -120,11 +128,29 @@ export async function quoteFromDb(
         grade: item.grade ?? null,
         quantity: item.quantity,
         refMarketPrice: printingPrice,
+        reason: "graded",
       });
       continue;
     }
 
+    // No market price: the feed has no listings for it. For sealed that
+    // usually means a scarce vintage box, so hand it to an admin rather than
+    // failing the whole quote.
     if (printingPrice === null) {
+      const category = (p.categoryOverride ?? p.category) as ProductCategory;
+      if (isManualQuoteCandidate(p.name, category, null)) {
+        manualLines.push({
+          productId: p.id,
+          productName: p.name,
+          printing: item.printing ?? null,
+          grader: null,
+          grade: null,
+          quantity: item.quantity,
+          refMarketPrice: null,
+          reason: "unpriced",
+        });
+        continue;
+      }
       throw new Error(`No market price for "${p.name}"`);
     }
     quotable.push({

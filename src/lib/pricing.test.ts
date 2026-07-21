@@ -43,6 +43,7 @@ function rule(partial: Partial<PricingRule>): PricingRule {
 
 const settings = {
   condition_curve: DEFAULT_CONDITION_CURVE,
+  manual_review_threshold: 1000,
   rounding_step: 0.25,
   rounding_mode: "step" as const,
   fallback_percentage: 50,
@@ -351,5 +352,85 @@ describe("computeQuote", () => {
     );
     expect(quote.lines[0].conditionMultiplier).toBe(1);
     expect(quote.lines[1].conditionMultiplier).toBe(1);
+  });
+});
+
+describe("high-value team-quote cap", () => {
+  const bigSingle: QuotableProduct = {
+    id: 900,
+    groupId: 1,
+    name: "Chase Card",
+    category: "singles",
+    marketPrice: 3000,
+    releaseYear: 2024, // modern NM = full value, isolates the cap
+  };
+
+  it("flags a line whose payout reaches the threshold", () => {
+    // 3000 × 50% = $1,500 ≥ $1,000 cap.
+    const quote = computeQuote(
+      [{ product: bigSingle, quantity: 1, condition: "NM" }],
+      [],
+      "store_credit",
+      settings,
+    );
+    expect(quote.lines[0].unitCredit).toBe(1500);
+    expect(quote.lines[0].reviewReasons).toContain("high_value");
+    expect(quote.lines[0].requiresReview).toBe(true);
+  });
+
+  it("leaves a payout below the threshold as an instant quote", () => {
+    // 1500 × 50% = $750 < $1,000.
+    const quote = computeQuote(
+      [{ product: { ...bigSingle, marketPrice: 1500 }, quantity: 1, condition: "NM" }],
+      [],
+      "store_credit",
+      settings,
+    );
+    expect(quote.lines[0].unitCredit).toBe(750);
+    expect(quote.lines[0].reviewReasons).toEqual([]);
+    expect(quote.lines[0].requiresReview).toBe(false);
+  });
+
+  it("caps on the per-unit payout, not the line total", () => {
+    // Ten $200-payout cards = $2,000 line, but no single item is over the cap.
+    const quote = computeQuote(
+      [{ product: { ...bigSingle, marketPrice: 400 }, quantity: 10, condition: "NM" }],
+      [],
+      "store_credit",
+      settings,
+    );
+    expect(quote.lines[0].lineCredit).toBe(2000);
+    expect(quote.lines[0].reviewReasons).not.toContain("high_value");
+  });
+
+  it("can carry both review reasons at once", () => {
+    // Vintage HP: off-condition, and a payout still over the cap.
+    // 12000 market × 50% × 0.30 (vintage HP) = $1,800.
+    const quote = computeQuote(
+      [
+        {
+          product: { ...bigSingle, marketPrice: 12000, releaseYear: 1999 },
+          quantity: 1,
+          condition: "HP",
+        },
+      ],
+      [],
+      "store_credit",
+      settings,
+    );
+    expect(quote.lines[0].unitCredit).toBe(1800);
+    expect(quote.lines[0].reviewReasons).toEqual(
+      expect.arrayContaining(["off_condition", "high_value"]),
+    );
+  });
+
+  it("disables the cap when the threshold is 0", () => {
+    const quote = computeQuote(
+      [{ product: bigSingle, quantity: 1, condition: "NM" }],
+      [],
+      "store_credit",
+      { ...settings, manual_review_threshold: 0 },
+    );
+    expect(quote.lines[0].reviewReasons).toEqual([]);
   });
 });

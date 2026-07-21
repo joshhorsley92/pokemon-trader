@@ -56,9 +56,12 @@ export type ListImportResult = {
   rejected: ImportRejection[];
   parsedCount: number;
   matchedCount: number;
+  /** Original list ran past the per-import cap and was trimmed to MAX_LINES. */
+  truncatedTo: number | null;
 };
 
-const MAX_LINES = 2000;
+/** Cap a single customer import — more than this and they should split it. */
+const MAX_LINES = 250;
 
 function defaultCondition(category: string): string {
   return category === "sealed" ? "Perfect" : "NM";
@@ -86,7 +89,9 @@ export async function importCustomerList(
   text: string,
   settings: AppSettings,
 ): Promise<ListImportResult> {
-  const parsed = parseList(text).slice(0, MAX_LINES);
+  const allParsed = parseList(text);
+  const parsed = allParsed.slice(0, MAX_LINES);
+  const truncatedTo = allParsed.length > MAX_LINES ? MAX_LINES : null;
   const index = await getCatalogIndex(db);
 
   const rejected: ImportRejection[] = [];
@@ -226,6 +231,7 @@ export async function importCustomerList(
     rejected,
     parsedCount: parsed.length,
     matchedCount: matchedLines.length,
+    truncatedTo,
   };
 }
 

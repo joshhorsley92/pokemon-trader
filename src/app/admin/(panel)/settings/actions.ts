@@ -29,6 +29,7 @@ const settingsSchema = z.object({
   min_single_price: z.coerce.number().min(0).max(10_000),
   bulk_rate_per_thousand: z.coerce.number().min(0).max(1000),
   inventory_market_markup: z.coerce.number().min(0.1).max(5),
+  manual_review_threshold: z.coerce.number().min(0).max(100_000),
 });
 
 const multiplierKeySchema = z.tuple([
@@ -68,6 +69,7 @@ export async function saveSettings(
     min_single_price: formData.get("min_single_price"),
     bulk_rate_per_thousand: formData.get("bulk_rate_per_thousand"),
     inventory_market_markup: formData.get("inventory_market_markup"),
+    manual_review_threshold: formData.get("manual_review_threshold"),
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid settings" };

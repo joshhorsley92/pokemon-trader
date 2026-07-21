@@ -19,6 +19,9 @@ import type { AppSettings } from "@/lib/settings";
 export type RateType = "store_credit" | "cash";
 export type ProductCategory = "singles" | "sealed" | "graded";
 
+/** Reasons a trade-in line needs a human before it's a binding offer. */
+export type ReviewReason = "off_condition" | "high_value";
+
 export type PricingRule = {
   id: string;
   scope: "category" | "set" | "product";
@@ -55,9 +58,14 @@ export type QuoteLine = {
   /** Which era bucket set the multiplier; null for NM and non-singles. */
   conditionEra: ConditionEraKey | null;
   /**
-   * Off-condition singles (MP or worse) sell slowly — flag them for a human
-   * to price instead of committing money automatically.
+   * Why (if at all) a human should handle this line before it's binding:
+   *   'off_condition' — MP or worse; slow-moving, verify grade in hand
+   *   'high_value'    — payout ≥ manual_review_threshold; a team member
+   *                     finalizes it (the estimate still stands as a ballpark)
+   * Empty = fully auto-quotable.
    */
+  reviewReasons: ReviewReason[];
+  /** Convenience: reviewReasons.length > 0. */
   requiresReview: boolean;
   quantity: number;
   unitMarketPrice: number;
@@ -171,6 +179,7 @@ export function computeQuote(
     | "condition_curve"
     | "low_value_tiers"
     | "min_single_price"
+    | "manual_review_threshold"
   >,
 ): Quote {
   const lines: QuoteLine[] = items.map(
@@ -217,8 +226,12 @@ export function computeQuote(
             condition: condition ?? null,
             conditionMultiplier: 1,
             conditionEra: null,
-            // Tier payouts are fixed and tiny, but off-condition stock is
-            // still slow to move — a human confirms it like any other.
+            // Tier payouts are fixed and tiny (never high-value), but
+            // off-condition stock is still slow to move — a human confirms
+            // it like any other.
+            reviewReasons: resolved.requiresReview
+              ? (["off_condition"] as ReviewReason[])
+              : [],
             requiresReview: resolved.requiresReview,
             quantity,
             unitMarketPrice: product.marketPrice,
@@ -256,6 +269,16 @@ export function computeQuote(
         );
       }
       const lineCreditCents = Math.round(unitCredit * 100) * quantity;
+      // A payout at/above the threshold is quoted by a team member by hand;
+      // the estimate here still stands as the ballpark they start from.
+      // Threshold is on the per-unit payout, not the card's market value.
+      const highValue =
+        settings.manual_review_threshold > 0 &&
+        unitCredit >= settings.manual_review_threshold;
+      const reviewReasons: ReviewReason[] = [
+        ...(resolved.requiresReview ? (["off_condition"] as const) : []),
+        ...(highValue ? (["high_value"] as const) : []),
+      ];
       return {
         productId: product.id,
         productName: product.name,
@@ -263,7 +286,8 @@ export function computeQuote(
         condition: condition ?? null,
         conditionMultiplier: multiplier,
         conditionEra: resolved.era,
-        requiresReview: resolved.requiresReview,
+        reviewReasons,
+        requiresReview: reviewReasons.length > 0,
         quantity,
         unitMarketPrice: product.marketPrice,
         appliedPercentage: percentage,

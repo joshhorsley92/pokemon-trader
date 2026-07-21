@@ -546,7 +546,16 @@ function MyCaseList({
                     {item.title}
                   </span>
                   <span className="block truncate text-xs text-neutral-500">
-                    {item.condition ? `${item.condition} · ` : ""}
+                    {[
+                      item.setName,
+                      item.cardNumber ? `#${item.cardNumber}` : null,
+                      item.printing,
+                      item.condition,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                  <span className="block text-[11px] text-neutral-400">
                     {item.quantity} in stock
                   </span>
                 </span>

@@ -23,6 +23,11 @@ export type CatalogHit = {
   // category, so it's shown disabled. `floor` is that threshold in dollars.
   belowFloor?: boolean;
   floor?: number;
+  /**
+   * Sealed with no market price in the feed — usually scarce vintage. Still
+   * addable, but it gets a hand-written offer instead of an instant quote.
+   */
+  manualQuote?: boolean;
 };
 
 export type TradeInLine = {
@@ -45,6 +50,10 @@ export type ShopItem = {
   price: number;
   photoUrl: string | null;
   imageUrl: string | null;
+  /** Identifiers so a card is unambiguous in the case */
+  setName: string | null;
+  cardNumber: string | null;
+  printing: string | null;
 };
 
 export type WantLine = {
@@ -64,6 +73,12 @@ export type QuoteLineDto = {
   hotBuyBonus: number;
   unitCredit: number;
   lineCredit: number;
+  /**
+   * Why a team member handles this line: 'high_value' (big payout — customer
+   * sees "we'll finalize this") or 'off_condition' (staff-only condition
+   * check). Absent/empty = instant quote stands.
+   */
+  reviewReasons?: ("off_condition" | "high_value")[];
 };
 
 export type ManualLineDto = {
@@ -73,6 +88,8 @@ export type ManualLineDto = {
   grader: string | null;
   grade: string | null;
   quantity: number;
+  /** 'graded' = slab; 'unpriced' = sealed with no market price */
+  reason?: "graded" | "unpriced";
 };
 
 export type HotBuyDto = {
@@ -123,6 +140,7 @@ export type ImportResultDto = {
   rejected: { raw: string; reason: string }[];
   parsedCount: number;
   matchedCount: number;
+  truncatedTo: number | null;
 };
 
 export function bulkLotCount(lot: BulkLot | null): number {

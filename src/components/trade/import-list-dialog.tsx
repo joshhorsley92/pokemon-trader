@@ -200,6 +200,17 @@ export function ImportListDialog({
                   )}
                 </div>
 
+                {result.truncatedTo !== null && (
+                  <div className="rounded-md bg-amber-50 px-3 py-2 text-amber-900">
+                    <p className="font-semibold">
+                      Long list — we took the first {result.truncatedTo} cards.
+                    </p>
+                    <p className="mt-0.5 text-xs">
+                      Bring the rest as a second list.
+                    </p>
+                  </div>
+                )}
+
                 {result.rejected.length > 0 && (
                   <div className="rounded-md bg-amber-50 px-3 py-2 text-amber-900">
                     <p className="font-semibold">

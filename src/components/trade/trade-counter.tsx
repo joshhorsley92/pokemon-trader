@@ -656,7 +656,7 @@ function StepTradeIn({
         <p className="mt-2 text-sm text-emerald-100/60">Checking the price list…</p>
       )}
       {hits.length > 0 && (
-        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+        <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {hits.map((hit) => {
             const below = hit.belowFloor === true;
             // Sealed we have no market price for — scarce vintage, usually.
@@ -739,7 +739,7 @@ function StepTradeIn({
               we&apos;re hunting these — bonus credit on top of our normal rate
             </span>
           </h3>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {shownHotBuys.map((hb) => {
               const onCounter = tradeIn
                 .filter((l) => l.product.id === hb.productId)
@@ -820,7 +820,7 @@ function StepTradeIn({
               from recent sets — tap to put one on the counter
             </span>
           </h3>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+          <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
             {shownPicks.map((pick) => {
               const onCounter = tradeIn
                 .filter((l) => l.product.id === pick.id)
@@ -1229,14 +1229,14 @@ function StepOurCase({
       ) : (
         <div className="case-frame mt-4">
           <div className="case-glass p-4 sm:p-5">
-            <ul className="relative z-[2] grid gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+            <ul className="relative z-[2] grid grid-cols-1 gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
           {shown.map((item) => {
             const want = wants.find((w) => w.item.id === item.id);
             const img = item.photoUrl ?? item.imageUrl;
             return (
               <li
                 key={item.id}
-                className={`shelf-item rounded-md bg-white/95 p-2.5 shadow-[0_12px_16px_-9px_rgba(0,0,0,0.55)] transition-shadow ${
+                className={`shelf-item min-w-0 rounded-md bg-white/95 p-2.5 shadow-[0_12px_16px_-9px_rgba(0,0,0,0.55)] transition-shadow ${
                   want ? "ring-2 ring-[var(--tag)]" : ""
                 }`}
               >
@@ -1518,7 +1518,7 @@ function StepShake({
             </label>
           ) : (
             <>
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <label className="block">
                   <span className="text-sm font-medium text-emerald-50">
                     Name

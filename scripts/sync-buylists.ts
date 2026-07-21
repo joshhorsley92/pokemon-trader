@@ -19,7 +19,12 @@ import { loadCatalogIndex } from "../src/lib/analyzer/match";
 import type { VendorAdapter } from "../src/lib/buylists/types";
 import { cardCavernAdapter } from "../src/lib/buylists/card-cavern";
 import { coolstuffAdapter } from "../src/lib/buylists/coolstuff";
-import { fullGripAdapter } from "../src/lib/buylists/full-grip";
+// Full Grip is intentionally NOT synced: its site tarpits datacenter IPs
+// (accepts the connection then trickles/stalls), so from CI it never makes
+// progress — observed hanging at seen=0 for 20-25 min while the other vendors
+// finished in under a minute. The adapter + its parser tests are kept in
+// ./src/lib/buylists/full-grip.ts so it can be re-enabled if we ever crawl
+// from a residential IP; just re-add fullGripAdapter to ADAPTERS below.
 
 // Avoid fetch failures on Windows networks where unroutable IPv6 wins the
 // default DNS ordering.
@@ -34,11 +39,7 @@ if (!connectionString) {
 const client = postgres(connectionString, { prepare: false, max: 5 });
 const db = drizzle(client, { schema: tables });
 
-const ADAPTERS: VendorAdapter[] = [
-  cardCavernAdapter,
-  coolstuffAdapter,
-  fullGripAdapter,
-];
+const ADAPTERS: VendorAdapter[] = [cardCavernAdapter, coolstuffAdapter];
 const BATCH_SIZE = 500;
 
 function chunk<T>(arr: T[], size: number): T[][] {

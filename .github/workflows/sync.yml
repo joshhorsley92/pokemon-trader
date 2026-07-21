@@ -18,7 +18,9 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Generous for the first-ever MTG backfill (hundreds of new sets); routine
+    # daily runs finish in a few minutes thanks to modifiedOn delta-skipping.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,8 +29,10 @@ jobs:
           cache: npm
       # The lockfile is regenerated in a linux container (see README) so it
       # carries linux-only optional deps (esbuild, @emnapi/*) and `npm ci`
-      # resolves cleanly on ubuntu runners.
-      - run: npm ci --no-audit --no-fund
+      # resolves cleanly on ubuntu runners. The fallback keeps the cron alive
+      # if a Windows `npm install` ever re-prunes those platform deps from the
+      # lockfile — install repairs it on the runner rather than failing the job.
+      - run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
       - name: Run sync
         env:
           DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}

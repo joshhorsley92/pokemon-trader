@@ -35,6 +35,13 @@ export type VendorAdapter = {
  * Retries generously on network-level failures (Josh's dev machine has
  * intermittent DNS flaps — ENOTFOUND on hosts that resolve seconds later).
  */
+// Hard ceiling per request. A vendor that accepts the connection but never
+// responds (Full Grip has been observed to tarpit datacenter IPs this way)
+// would otherwise hang `fetch` forever — stalling the whole nightly job until
+// the CI timeout. AbortSignal.timeout turns that into a normal, retryable
+// failure so one dead vendor can't wedge the run.
+const REQUEST_TIMEOUT_MS = 30_000;
+
 export async function fetchWithRetry(
   url: string,
   init: RequestInit = {},
@@ -43,8 +50,13 @@ export async function fetchWithRetry(
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
       const res = await fetch(url, {
         ...init,
+        // Honor any caller-supplied signal alongside the timeout.
+        signal: init.signal
+          ? AbortSignal.any([init.signal, timeout])
+          : timeout,
         headers: {
           "User-Agent": "pokemon-trader/0.1.0",
           ...init.headers,

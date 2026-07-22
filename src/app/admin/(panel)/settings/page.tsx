@@ -29,6 +29,7 @@ export default async function SettingsPage() {
           manual_review_threshold: settings.manual_review_threshold,
         }}
         conditionMultipliers={settings.condition_multipliers}
+        conditionCurve={settings.condition_curve}
         analyzerEconomics={settings.analyzer_economics}
         lowValueTiers={settings.low_value_tiers}
       />

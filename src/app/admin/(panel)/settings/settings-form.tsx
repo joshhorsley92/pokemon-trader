@@ -6,6 +6,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CONDITIONS, type ConditionMultipliers } from "@/lib/conditions";
+import {
+  SINGLES_CONDITION_ORDER,
+  type ConditionCurve,
+} from "@/lib/condition-curve";
 import type { AnalyzerEconomics } from "@/lib/analyzer/engine";
 import type { LowValueTier } from "@/lib/pricing";
 import { saveSettings, type SettingsState } from "./actions";
@@ -166,17 +170,30 @@ const ANALYZER_FIELDS: {
   },
 ];
 
+// Singles conditions the curve prices, worst-to-best, NM excluded (always 1).
+const CURVE_CONDITIONS = SINGLES_CONDITION_ORDER.filter((c) => c !== "NM");
+const SINGLES_LABEL: Record<string, string> = Object.fromEntries(
+  CONDITIONS.singles.map((c) => [c.value, c.label]),
+);
+
 export function SettingsForm({
   defaults,
   conditionMultipliers,
+  conditionCurve,
   analyzerEconomics,
   lowValueTiers,
 }: {
   defaults: Defaults;
   conditionMultipliers: ConditionMultipliers;
+  conditionCurve: ConditionCurve;
   analyzerEconomics: AnalyzerEconomics;
   lowValueTiers: LowValueTier[];
 }) {
+  // Display eras oldest→newest (vintage first); undated era (maxYear null) last.
+  const eras = [...conditionCurve.eras].sort(
+    (a, b) => (a.maxYear ?? Infinity) - (b.maxYear ?? Infinity),
+  );
+  const band = conditionCurve.valueBands[0] ?? { maxMarket: 0, delta: 0 };
   const [state, formAction, pending] = useActionState<SettingsState, FormData>(
     saveSettings,
     {},
@@ -202,17 +219,15 @@ export function SettingsForm({
 
           <div className="space-y-3 border-t pt-4">
             <div>
-              <p className="text-sm font-medium">Condition multipliers</p>
+              <p className="text-sm font-medium">Sealed condition multipliers</p>
               <p className="text-xs text-neutral-500">
-                Credit is multiplied by these based on the condition the
-                customer selects. 1.0 = full value, 0.9 = 90%, etc.
+                Credit for <strong>sealed</strong> product is multiplied by
+                these based on packaging condition. 1.0 = full value, 0.9 =
+                90%. (Singles use the age-based curve below, not this table.)
               </p>
             </div>
-            {(["sealed", "singles"] as const).map((category) => (
+            {(["sealed"] as const).map((category) => (
               <div key={category} className="space-y-1.5">
-                <p className="text-xs font-semibold uppercase text-neutral-500">
-                  {category}
-                </p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {CONDITIONS[category].map((c) => (
                     <div key={c.value} className="space-y-1">
@@ -239,6 +254,131 @@ export function SettingsForm({
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="space-y-3 border-t pt-4">
+            <div>
+              <p className="text-sm font-medium">
+                Singles condition curve (by set age)
+              </p>
+              <p className="text-xs text-neutral-500">
+                Credit for <strong>singles</strong> is multiplied by these,
+                chosen by the card&apos;s set release year. Off-condition
+                vintage sells for far less of Near&nbsp;Mint than modern does,
+                so each era has its own ladder. Near&nbsp;Mint is always full
+                value (1.0).
+              </p>
+            </div>
+            <div className="space-y-3">
+              <div
+                className="grid items-center gap-2 text-xs font-semibold uppercase text-neutral-500"
+                style={{
+                  gridTemplateColumns: `minmax(9rem,1.4fr) repeat(${CURVE_CONDITIONS.length}, 1fr)`,
+                }}
+              >
+                <span>Era</span>
+                {CURVE_CONDITIONS.map((c) => (
+                  <span key={c}>{SINGLES_LABEL[c] ?? c}</span>
+                ))}
+              </div>
+              {eras.map((era) => (
+                <div
+                  key={era.key}
+                  className="grid items-center gap-2"
+                  style={{
+                    gridTemplateColumns: `minmax(9rem,1.4fr) repeat(${CURVE_CONDITIONS.length}, 1fr)`,
+                  }}
+                >
+                  <span
+                    className="text-xs text-neutral-600"
+                    title={
+                      era.maxYear
+                        ? `Sets released ${era.maxYear} and earlier`
+                        : "Newest sets"
+                    }
+                  >
+                    {era.label}
+                  </span>
+                  {CURVE_CONDITIONS.map((c) => (
+                    <Input
+                      key={c}
+                      name={`cc:era:${era.key}:${c}`}
+                      aria-label={`${era.label} ${SINGLES_LABEL[c] ?? c}`}
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="2"
+                      defaultValue={era.ratios[c] ?? ""}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1">
+                <Label htmlFor="cc:band:maxMarket" className="text-xs font-normal">
+                  Low-value cutoff ($ market)
+                </Label>
+                <Input
+                  id="cc:band:maxMarket"
+                  name="cc:band:maxMarket"
+                  type="number"
+                  step="1"
+                  min="0"
+                  defaultValue={band.maxMarket}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="cc:band:delta" className="text-xs font-normal">
+                  Low-value penalty (± ratio)
+                </Label>
+                <Input
+                  id="cc:band:delta"
+                  name="cc:band:delta"
+                  type="number"
+                  step="0.05"
+                  min="-1"
+                  max="0"
+                  defaultValue={band.delta}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="cc:floor" className="text-xs font-normal">
+                  Minimum ratio (floor)
+                </Label>
+                <Input
+                  id="cc:floor"
+                  name="cc:floor"
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1"
+                  defaultValue={conditionCurve.floor}
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="cc:review" className="text-xs font-normal">
+                Send to manual review at or below
+              </Label>
+              <select
+                id="cc:review"
+                name="cc:review"
+                defaultValue={conditionCurve.reviewAtOrBelow ?? "none"}
+                className="flex h-9 w-full rounded-md border border-neutral-200 bg-transparent px-3 py-1 text-sm shadow-sm"
+              >
+                <option value="none">Never — always auto-quote</option>
+                {CURVE_CONDITIONS.map((c) => (
+                  <option key={c} value={c}>
+                    {SINGLES_LABEL[c] ?? c} and worse
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-neutral-500">
+                These singles get flagged for a team member instead of a firm
+                instant quote (slow-moving off-condition stock).
+              </p>
+            </div>
           </div>
           <div className="space-y-3 border-t pt-4">
             <div>

@@ -5,11 +5,18 @@ import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import type { ConditionMultipliers } from "@/lib/conditions";
 import {
+  SINGLES_CONDITION_ORDER,
+  type ConditionCurve,
+} from "@/lib/condition-curve";
+import {
   DEFAULT_ANALYZER_ECONOMICS,
   type AnalyzerEconomics,
 } from "@/lib/analyzer/engine";
-import { setSetting } from "@/lib/settings";
+import { getSettings, setSetting } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
+
+// Singles conditions the curve prices, worst-to-best excluding NM (always 1).
+const CURVE_CONDITIONS = SINGLES_CONDITION_ORDER.filter((c) => c !== "NM");
 
 const settingsSchema = z.object({
   shop_name: z.string().min(1).max(100),
@@ -140,8 +147,65 @@ export async function saveSettings(
     sawEconomics = true;
   }
 
+  // Singles condition curve: cc:era:<eraKey>:<condition> (ratios),
+  // cc:floor, cc:band:maxMarket, cc:band:delta, cc:review. Reconstructed by
+  // overlaying edited fields onto the shop's current curve so era boundaries
+  // and labels are preserved (only the tunable numbers come from the form).
+  const settings = await getSettings(shopId);
+  const curve: ConditionCurve = structuredClone(settings.condition_curve);
+  let sawCurve = false;
+  const ratioSchema = z.coerce.number().min(0).max(2);
+  for (const era of curve.eras) {
+    era.ratios.NM = 1; // NM is always full value; not user-editable
+    for (const cond of CURVE_CONDITIONS) {
+      const raw = formData.get(`cc:era:${era.key}:${cond}`);
+      if (raw == null) continue;
+      const v = ratioSchema.safeParse(raw);
+      if (!v.success) {
+        return { error: `Invalid curve value for ${era.label} · ${cond}` };
+      }
+      era.ratios[cond] = v.data;
+      sawCurve = true;
+    }
+  }
+  const floorRaw = formData.get("cc:floor");
+  if (floorRaw != null) {
+    const v = z.coerce.number().min(0).max(1).safeParse(floorRaw);
+    if (!v.success) return { error: "Invalid curve floor" };
+    curve.floor = v.data;
+    sawCurve = true;
+  }
+  const bandMaxRaw = formData.get("cc:band:maxMarket");
+  const bandDeltaRaw = formData.get("cc:band:delta");
+  if (bandMaxRaw != null && bandDeltaRaw != null) {
+    const maxV = z.coerce.number().min(0).max(100_000).safeParse(bandMaxRaw);
+    // Delta only ever discounts — never let the low-value band pay a premium.
+    const deltaV = z.coerce.number().min(-1).max(0).safeParse(bandDeltaRaw);
+    if (!maxV.success || !deltaV.success) {
+      return { error: "Invalid low-value band" };
+    }
+    // maxMarket 0 or delta 0 = band disabled (no adjustment).
+    curve.valueBands =
+      maxV.data > 0 && deltaV.data < 0
+        ? [{ maxMarket: maxV.data, delta: deltaV.data }]
+        : [];
+    sawCurve = true;
+  }
+  const reviewRaw = formData.get("cc:review");
+  if (reviewRaw != null) {
+    const s = String(reviewRaw);
+    if (s !== "none" && !SINGLES_CONDITION_ORDER.includes(s)) {
+      return { error: "Invalid manual-review condition" };
+    }
+    curve.reviewAtOrBelow = s === "none" ? null : s;
+    sawCurve = true;
+  }
+
   for (const [key, value] of Object.entries(parsed.data)) {
     await setSetting(shopId, key as keyof typeof parsed.data, value as never);
+  }
+  if (sawCurve) {
+    await setSetting(shopId, "condition_curve", curve);
   }
   if (Object.keys(multipliers).length > 0) {
     await setSetting(shopId, "condition_multipliers", multipliers);

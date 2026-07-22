@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -10,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { setItemPrice, setItemQuantity } from "./actions";
+import { bulkPriceToMarket, setItemPrice, setItemQuantity } from "./actions";
 import { DeleteItemButton, ItemDialog } from "./item-forms";
 
 export type InventoryRow = {
@@ -29,6 +30,8 @@ export type InventoryRow = {
   /** Effective sell price, resolved server-side; null = unpriced */
   price: number | null;
   priceSource: "fixed" | "market" | null;
+  /** What this item WOULD sell for if it tracked market (market × markup) */
+  marketSell: number | null;
 };
 
 const PAGE_SIZES = [10, 25, 50, 100] as const;
@@ -41,6 +44,38 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
   const [filter, setFilter] = useState("");
   const [pageSize, setPageSize] = useState<number>(25);
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkPending, startBulk] = useTransition();
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+
+  function toggleRow(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function runBulk(mode: "all" | "raise" | "lower", label: string) {
+    const ids = selected.size > 0 ? [...selected] : null;
+    const scope =
+      ids !== null ? `the ${ids.length} selected item(s)` : `ALL ${rows.length} items`;
+    if (!confirm(`${label} for ${scope}? Only fixed prices change — market-tracked items are already at market.`)) {
+      return;
+    }
+    setBulkResult(null);
+    startBulk(async () => {
+      const res = await bulkPriceToMarket({ ids, mode });
+      setBulkResult(
+        res.error ??
+          `Updated ${res.updated} price${res.updated === 1 ? "" : "s"}${
+            res.skipped > 0 ? ` (${res.skipped} already in line or not eligible)` : ""
+          }.`,
+      );
+      setSelected(new Set());
+    });
+  }
 
   const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
@@ -105,9 +140,79 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
         </label>
       </div>
 
+      {/* Bulk pricing: acts on the checked rows, or everything when none are
+          checked. Only fixed prices move — market-tracked rows already float. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-white px-3 py-2 shadow-sm">
+        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          Bulk pricing
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={bulkPending}
+          onClick={() =>
+            runBulk("all", "Clear fixed prices so items float with live market")
+          }
+          title="Removes the fixed price — the item tracks market (× markup) from then on"
+        >
+          Float with market
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={bulkPending}
+          onClick={() => runBulk("raise", "Raise below-market prices to market")}
+          title="Only items priced BELOW market move up — a price floor"
+        >
+          Raise to market ↑
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={bulkPending}
+          onClick={() => runBulk("lower", "Lower above-market prices to market")}
+          title="Only items priced ABOVE market move down — a price ceiling"
+        >
+          Lower to market ↓
+        </Button>
+        <span className="text-xs text-neutral-500">
+          {bulkPending
+            ? "Updating…"
+            : selected.size > 0
+              ? `applies to ${selected.size} selected`
+              : `nothing selected — applies to all ${rows.length}`}
+        </span>
+        {bulkResult && (
+          <span className="text-xs font-medium text-emerald-700">{bulkResult}</span>
+        )}
+      </div>
+
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8">
+              <input
+                type="checkbox"
+                aria-label="Select all filtered items"
+                checked={filtered.length > 0 && selected.size >= filtered.length}
+                ref={(el) => {
+                  if (el) {
+                    el.indeterminate =
+                      selected.size > 0 && selected.size < filtered.length;
+                  }
+                }}
+                onChange={(e) =>
+                  setSelected(
+                    e.target.checked
+                      ? new Set(filtered.map((r) => r.id))
+                      : new Set(),
+                  )
+                }
+              />
+            </TableHead>
             <TableHead>Item</TableHead>
             <TableHead>Category</TableHead>
             <TableHead className="text-center">Qty</TableHead>
@@ -119,6 +224,14 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
         <TableBody>
           {shown.map((row) => (
             <TableRow key={row.id}>
+              <TableCell className="w-8">
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${row.title}`}
+                  checked={selected.has(row.id)}
+                  onChange={() => toggleRow(row.id)}
+                />
+              </TableCell>
               <TableCell className="max-w-md">
                 <span className="block truncate font-medium">{row.title}</span>
                 <span className="block truncate text-xs text-neutral-400">
@@ -151,6 +264,17 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
                   price={row.price}
                   priceSource={row.priceSource}
                 />
+                {row.priceSource === "fixed" &&
+                  row.price !== null &&
+                  row.marketSell !== null &&
+                  row.marketSell > row.price && (
+                    <span
+                      className="mt-0.5 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                      title="Market has moved above your fixed price"
+                    >
+                      ↑ mkt ${row.marketSell.toFixed(0)}
+                    </span>
+                  )}
               </TableCell>
               <TableCell>
                 <Badge
@@ -184,7 +308,7 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
           ))}
           {shown.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="py-8 text-center text-neutral-500">
+              <TableCell colSpan={7} className="py-8 text-center text-neutral-500">
                 {rows.length === 0
                   ? "No inventory yet — add a card above or import a Collectr CSV."
                   : "Nothing matches that search."}

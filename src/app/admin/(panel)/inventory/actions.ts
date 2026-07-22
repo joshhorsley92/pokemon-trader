@@ -1,11 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, ilike } from "drizzle-orm";
+import { and, eq, ilike, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db, tables } from "@/db";
 import { requireSession } from "@/lib/auth";
-import { setSetting } from "@/lib/settings";
+import { effectiveInventoryPrice } from "@/lib/inventory";
+import { getSettings, setSetting } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
 
 // Quick sell-pricing knob: "market + X%". Stored as a multiplier
@@ -164,6 +165,102 @@ export async function setItemPrice(
     );
   revalidatePath("/admin/inventory");
   return {};
+}
+
+const bulkPriceSchema = z.object({
+  // null = every item; otherwise just the checked rows
+  ids: z.array(z.string().uuid()).max(5000).nullable(),
+  mode: z.enum(["all", "raise", "lower"]),
+});
+
+/**
+ * Bulk-align fixed asking prices with the market sell price (market × markup,
+ * rounded up to the dollar like every market-tracked item).
+ *   all   — CLEAR the fixed price so the item floats with live market pricing
+ *   raise — only items priced BELOW market come up to it (price floor;
+ *           stays a fixed price so it can't drift back down)
+ *   lower — only items priced ABOVE market come down to it (price ceiling;
+ *           stays fixed likewise)
+ * Market-tracking items (no fixed price) are already at market and untouched.
+ */
+export async function bulkPriceToMarket(
+  input: z.infer<typeof bulkPriceSchema>,
+): Promise<{ updated: number; skipped: number; error?: string }> {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const parsed = bulkPriceSchema.safeParse(input);
+  if (!parsed.success) return { updated: 0, skipped: 0, error: "Invalid request" };
+  const { ids, mode } = parsed.data;
+  const settings = await getSettings(shopId);
+
+  const rows = await db
+    .select({
+      id: tables.inventoryItems.id,
+      askingPrice: tables.inventoryItems.askingPrice,
+      marketPrice: tables.catalogProducts.marketPrice,
+    })
+    .from(tables.inventoryItems)
+    .innerJoin(
+      tables.catalogProducts,
+      eq(tables.catalogProducts.id, tables.inventoryItems.productId),
+    )
+    .where(
+      and(
+        eq(tables.inventoryItems.shopId, shopId),
+        isNotNull(tables.inventoryItems.askingPrice),
+        isNotNull(tables.catalogProducts.marketPrice),
+        ...(ids !== null ? [inArray(tables.inventoryItems.id, ids)] : []),
+      ),
+    );
+
+  // target null = clear the override (float with market)
+  const updates: { id: string; target: number | null }[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const current = Number(row.askingPrice);
+    const target = effectiveInventoryPrice(
+      null,
+      Number(row.marketPrice),
+      settings.inventory_market_markup,
+    )?.price;
+    if (target === undefined) {
+      skipped++;
+      continue;
+    }
+    if (mode === "all") {
+      updates.push({ id: row.id, target: null });
+      continue;
+    }
+    const eligible =
+      (mode === "raise" && current < target) ||
+      (mode === "lower" && current > target);
+    if (!eligible || current === target) {
+      skipped++;
+      continue;
+    }
+    updates.push({ id: row.id, target });
+  }
+
+  if (updates.length > 0) {
+    await db.transaction(async (tx) => {
+      for (const u of updates) {
+        await tx
+          .update(tables.inventoryItems)
+          .set({
+            askingPrice: u.target === null ? null : u.target.toFixed(2),
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(tables.inventoryItems.shopId, shopId),
+              eq(tables.inventoryItems.id, u.id),
+            ),
+          );
+      }
+    });
+  }
+  revalidatePath("/admin/inventory");
+  return { updated: updates.length, skipped };
 }
 
 export async function createItem(

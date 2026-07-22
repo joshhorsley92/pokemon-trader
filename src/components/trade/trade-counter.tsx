@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CONDITIONS, defaultCondition } from "@/lib/conditions";
 import { GRADERS, GRADES } from "@/lib/grading";
+import { gameLabel, SYNCED_CATEGORIES } from "@/lib/tcgcsv";
 import { applyRounding, type RoundingSettings } from "@/lib/pricing";
 import { DealSlip } from "./deal-slip";
 import { ImportListDialog } from "./import-list-dialog";
@@ -612,25 +613,102 @@ function StepTradeIn({
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<CatalogHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Narrowing filters — for card hunts, filters beat pagination
+  const [gameFilter, setGameFilter] = useState<number | null>(null);
+  const [typeFilter, setTypeFilter] = useState<"all" | "singles" | "sealed">(
+    "all",
+  );
+  const [setFilter, setSetFilter] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  // Set picker (autocomplete)
+  const [setPickerQuery, setSetPickerQuery] = useState("");
+  const [setOptions, setSetOptions] = useState<
+    { id: number; name: string; gameId: number }[]
+  >([]);
+
+  // A set filter alone is enough to browse — no typed query required
+  const searchActive = query.trim().length >= 2 || setFilter !== null;
+
+  function searchUrl(offset: number): string {
+    const params = new URLSearchParams({
+      category: typeFilter,
+      includeBelow: "1",
+      q: query.trim(),
+    });
+    if (gameFilter !== null) params.set("game", String(gameFilter));
+    if (setFilter !== null) params.set("set", String(setFilter.id));
+    if (offset > 0) params.set("offset", String(offset));
+    return `/api/catalog/search?${params.toString()}`;
+  }
 
   useEffect(() => {
     const timer = setTimeout(async () => {
-      if (query.trim().length < 2) {
+      if (!(query.trim().length >= 2 || setFilter !== null)) {
         setHits([]);
+        setHasMore(false);
         return;
       }
       setSearching(true);
       try {
-        const res = await fetch(
-          `/api/catalog/search?category=all&includeBelow=1&q=${encodeURIComponent(query)}`,
-        );
-        if (res.ok) setHits((await res.json()).results);
+        const params = new URLSearchParams({
+          category: typeFilter,
+          includeBelow: "1",
+          q: query.trim(),
+        });
+        if (gameFilter !== null) params.set("game", String(gameFilter));
+        if (setFilter !== null) params.set("set", String(setFilter.id));
+        const res = await fetch(`/api/catalog/search?${params.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          setHits(data.results);
+          setHasMore(Boolean(data.hasMore));
+        }
       } finally {
         setSearching(false);
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, gameFilter, typeFilter, setFilter]);
+
+  // Set autocomplete options (fires while the set picker is in use)
+  useEffect(() => {
+    if (setFilter !== null) return;
+    const timer = setTimeout(async () => {
+      if (setPickerQuery.trim().length < 2) {
+        setSetOptions([]);
+        return;
+      }
+      const params = new URLSearchParams({ q: setPickerQuery.trim() });
+      if (gameFilter !== null) params.set("game", String(gameFilter));
+      const res = await fetch(`/api/catalog/sets?${params.toString()}`);
+      if (res.ok) setSetOptions((await res.json()).results);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [setPickerQuery, gameFilter, setFilter]);
+
+  async function showMore() {
+    setLoadingMore(true);
+    try {
+      const res = await fetch(searchUrl(hits.length));
+      if (res.ok) {
+        const data = await res.json();
+        setHits((prev) => {
+          const seen = new Set(prev.map((h) => h.id));
+          return [
+            ...prev,
+            ...data.results.filter((h: CatalogHit) => !seen.has(h.id)),
+          ];
+        });
+        setHasMore(Boolean(data.hasMore));
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <section className="felt-stitch p-4 sm:p-6">
@@ -651,6 +729,100 @@ function StepTradeIn({
           className="w-full min-w-0 flex-1 rounded-md border-0 bg-white px-4 py-3 text-[15px] text-[var(--ink)] shadow-inner outline-none ring-emerald-300 focus:ring-2"
         />
         {!booth && <ImportListDialog onImport={onImport} />}
+      </div>
+      <p className="mt-1.5 text-xs text-emerald-100/60">
+        Tip: add the set or card number to narrow it down — try
+        &ldquo;Charizard 4/102&rdquo; or &ldquo;Charizard Base Set&rdquo;.
+      </p>
+
+      {/* Filter row: game · type · set — narrowing beats paging for card hunts */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+        {[
+          [null, "All games"] as const,
+          ...SYNCED_CATEGORIES.map((c) => [c.id, c.label] as const),
+        ].map(([id, label]) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => setGameFilter(id)}
+            className={`rounded-full border px-2.5 py-1 font-medium transition-colors ${
+              gameFilter === id
+                ? "border-[var(--manila)] bg-[var(--manila)] text-[var(--ink)]"
+                : "border-emerald-200/40 text-emerald-100/80 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="mx-1 text-emerald-200/30">|</span>
+        {(
+          [
+            ["all", "Everything"],
+            ["singles", "Cards"],
+            ["sealed", "Sealed"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTypeFilter(value)}
+            className={`rounded-full border px-2.5 py-1 font-medium transition-colors ${
+              typeFilter === value
+                ? "border-[var(--manila)] bg-[var(--manila)] text-[var(--ink)]"
+                : "border-emerald-200/40 text-emerald-100/80 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="mx-1 text-emerald-200/30">|</span>
+        {setFilter ? (
+          <span className="flex items-center gap-1 rounded-full border border-[var(--manila)] bg-[var(--manila)] px-2.5 py-1 font-medium text-[var(--ink)]">
+            {setFilter.name}
+            <button
+              type="button"
+              onClick={() => {
+                setSetFilter(null);
+                setSetPickerQuery("");
+              }}
+              aria-label="Clear set filter"
+              className="font-bold"
+            >
+              ×
+            </button>
+          </span>
+        ) : (
+          <span className="relative">
+            <input
+              type="text"
+              value={setPickerQuery}
+              onChange={(e) => setSetPickerQuery(e.target.value)}
+              placeholder="Filter by set…"
+              className="w-36 rounded-full border border-emerald-200/40 bg-transparent px-2.5 py-1 text-emerald-50 placeholder:text-emerald-100/50 focus:border-emerald-200/80 focus:outline-none"
+            />
+            {setOptions.length > 0 && (
+              <ul className="absolute left-0 top-full z-30 mt-1 max-h-56 w-64 overflow-y-auto rounded-md border bg-white py-1 shadow-lg">
+                {setOptions.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSetFilter({ id: s.id, name: s.name });
+                        setSetOptions([]);
+                      }}
+                      className="w-full px-3 py-1.5 text-left text-[var(--ink)] hover:bg-neutral-100"
+                    >
+                      {s.name}
+                      <span className="ml-1 text-neutral-400">
+                        · {gameLabel(s.gameId)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </span>
+        )}
       </div>
 
       {searching && (
@@ -710,7 +882,16 @@ function StepTradeIn({
                       {hit.name}
                     </span>
                     <span className="block text-xs text-neutral-500">
+                      {gameFilter === null && hit.gameId != null && (
+                        <>{gameLabel(hit.gameId)} · </>
+                      )}
                       {hit.groupName}
+                      {hit.cardNumber && (
+                        <span className="text-neutral-400">
+                          {" "}
+                          · {hit.cardNumber}
+                        </span>
+                      )}
                     </span>
                     {below && (
                       <span className="mt-0.5 block text-[11px] font-medium text-red-600/80">
@@ -731,8 +912,26 @@ function StepTradeIn({
           })}
         </ul>
       )}
+      {searchActive && !searching && hits.length === 0 && (
+        <p className="mt-3 rounded-md bg-emerald-950/40 p-3 text-sm text-emerald-100/80">
+          No matches — try fewer words, check the spelling, or use the card
+          number (like &ldquo;4/102&rdquo;).
+        </p>
+      )}
+      {hits.length > 0 && hasMore && (
+        <div className="mt-3 flex justify-center">
+          <button
+            type="button"
+            onClick={showMore}
+            disabled={loadingMore}
+            className="rounded-full border border-emerald-200/40 px-4 py-1.5 text-sm font-medium text-emerald-100/90 hover:text-white disabled:opacity-50"
+          >
+            {loadingMore ? "Loading…" : "Show more results ↓"}
+          </button>
+        </div>
+      )}
 
-      {query.trim().length < 2 && hotBuys.length > 0 && (
+      {!searchActive && hotBuys.length > 0 && (
         <div className="mt-6">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-100/80">
             🔥 Hot buys
@@ -813,7 +1012,7 @@ function StepTradeIn({
         </div>
       )}
 
-      {query.trim().length < 2 && popularPicks.length > 0 && (
+      {!searchActive && popularPicks.length > 0 && (
         <div className="mt-6">
           <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-100/80">
             Popular picks

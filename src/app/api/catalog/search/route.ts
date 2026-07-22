@@ -25,6 +25,17 @@ export async function GET(request: NextRequest) {
   // them. Admin callers omit it and keep the clean, floor-filtered list.
   const includeBelow =
     request.nextUrl.searchParams.get("includeBelow") === "1";
+  // Narrowing filters: game = TCGplayer categoryId (1 Magic, 3 Pokémon),
+  // set = catalog groupId. offset pages through results ("Show more").
+  const gameParam = Number(request.nextUrl.searchParams.get("game"));
+  const gameId = Number.isInteger(gameParam) && gameParam > 0 ? gameParam : null;
+  const setParam = Number(request.nextUrl.searchParams.get("set"));
+  const setId = Number.isInteger(setParam) && setParam > 0 ? setParam : null;
+  const offsetParam = Number(request.nextUrl.searchParams.get("offset"));
+  const offset =
+    Number.isInteger(offsetParam) && offsetParam > 0
+      ? Math.min(offsetParam, 500)
+      : 0;
   const settings = await getSettings(await getCurrentShopId());
 
   // Each word must match the card name, the set name, OR the card number —
@@ -91,12 +102,14 @@ export async function GET(request: NextRequest) {
     ) e WHERE e->>'name' = 'Number' LIMIT 1
   )`;
 
-  const results = await db
+  const PAGE = 20;
+  const rows = await db
     .select({
       id: tables.catalogProducts.id,
       name: tables.catalogProducts.name,
       groupId: tables.catalogProducts.groupId,
       groupName: tables.catalogGroups.name,
+      gameId: tables.catalogGroups.categoryId,
       imageUrl: tables.catalogProducts.imageUrl,
       marketPrice: tables.catalogProducts.marketPrice,
       cardNumber,
@@ -114,6 +127,12 @@ export async function GET(request: NextRequest) {
     .where(
       and(
         categoryFilter,
+        ...(gameId !== null
+          ? [sql`${tables.catalogGroups.categoryId} = ${gameId}`]
+          : []),
+        ...(setId !== null
+          ? [sql`${tables.catalogProducts.groupId} = ${setId}`]
+          : []),
         // Unpriced rows are allowed through only when they qualify as a
         // manual-quote lead; low-value unpriced junk stays hidden.
         sql`(${tables.catalogProducts.marketPrice} IS NOT NULL OR ${manualQuote})`,
@@ -124,9 +143,15 @@ export async function GET(request: NextRequest) {
     // NULLS LAST keeps manual-quote leads below real priced matches rather
     // than letting Postgres float them to the top of a DESC sort.
     .orderBy(belowFloor, sql`${tables.catalogProducts.marketPrice} DESC NULLS LAST`)
-    .limit(20);
+    .offset(offset)
+    // One extra row = cheap hasMore probe for the "Show more" button
+    .limit(PAGE + 1);
+
+  const hasMore = rows.length > PAGE;
+  const results = hasMore ? rows.slice(0, PAGE) : rows;
 
   return NextResponse.json({
+    hasMore,
     results: results.map((r) => ({
       ...r,
       marketPrice: r.marketPrice ? Number(r.marketPrice) : null,

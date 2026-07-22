@@ -13,6 +13,8 @@ export type CatalogHit = {
   marketPrice: number | null;
   /** Card number like "041/094" — singles only; helps spot wrong matches */
   cardNumber?: string | null;
+  /** TCGplayer categoryId (game) of the set — 3 Pokémon, 1 Magic */
+  gameId?: number | null;
   // Drives which condition scale (sealed packaging vs card grades) the trade
   // builder shows for this item.
   category: "singles" | "sealed" | "graded";

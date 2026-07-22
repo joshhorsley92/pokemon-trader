@@ -61,7 +61,16 @@ export default async function InventoryPage() {
 
   const tableRows: InventoryRow[] = rows.map((row) => {
     const priced = priceOf(row);
+    // What the item would sell for if it tracked market — used to flag fixed
+    // prices the market has left behind.
+    const marketSell =
+      effectiveInventoryPrice(
+        null,
+        row.marketPrice === null ? null : Number(row.marketPrice),
+        settings.inventory_market_markup,
+      )?.price ?? null;
     return {
+      marketSell,
       id: row.id,
       title: row.title,
       category: row.category,

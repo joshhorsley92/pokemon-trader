@@ -66,11 +66,13 @@ export default async function SubmissionDetailPage({
         .select({
           id: tables.catalogProducts.id,
           marketPrice: tables.catalogProducts.marketPrice,
+          tcgplayerUrl: tables.catalogProducts.tcgplayerUrl,
         })
         .from(tables.catalogProducts)
         .where(inArray(tables.catalogProducts.id, productIds))
     : [];
   const currentById = new Map(currentPrices.map((p) => [p.id, p.marketPrice]));
+  const tcgUrlById = new Map(currentPrices.map((p) => [p.id, p.tcgplayerUrl]));
 
   const expired = isQuoteExpired(submission.status, submission.quoteExpiresAt);
 
@@ -222,6 +224,7 @@ export default async function SubmissionDetailPage({
             </TableHeader>
             <TableBody>
               {quotedItems.map((item) => {
+                const tcgUrl = tcgUrlById.get(item.productId) ?? null;
                 const nowRaw = currentById.get(item.productId);
                 const now = nowRaw == null ? null : Number(nowRaw);
                 const then = Number(item.unitMarketPrice);
@@ -239,7 +242,20 @@ export default async function SubmissionDetailPage({
                 return (
                   <TableRow key={item.id}>
                     <TableCell className="max-w-sm whitespace-normal font-medium">
-                      {item.productName}
+                      {tcgUrl ? (
+                        <a
+                          href={tcgUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open on TCGplayer to verify pricing"
+                          className="underline-offset-2 hover:underline"
+                        >
+                          {item.productName}
+                          <span className="ml-1 text-xs text-neutral-400">↗</span>
+                        </a>
+                      ) : (
+                        item.productName
+                      )}
                       {Number(item.hotBuyBonus) > 0 && (
                         <span className="ml-2 rounded bg-orange-100 px-1.5 py-0.5 text-[11px] font-medium text-orange-800">
                           🔥 hot buy +{Number(item.hotBuyBonus)}%
@@ -354,7 +370,19 @@ export default async function SubmissionDetailPage({
                 {bulkItems.map((item) => (
                   <li key={item.id} className="flex justify-between gap-2">
                     <span className="min-w-0 flex-1 truncate">
-                      {item.quantity}× {item.productName}
+                      {item.quantity}×{" "}
+                      {tcgUrlById.get(item.productId) ? (
+                        <a
+                          href={tcgUrlById.get(item.productId)!}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="underline-offset-2 hover:underline"
+                        >
+                          {item.productName}
+                        </a>
+                      ) : (
+                        item.productName
+                      )}
                     </span>
                     <span className="shrink-0 tabular-nums text-neutral-400">
                       mkt {money(item.unitMarketPrice)}

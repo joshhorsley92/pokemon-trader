@@ -32,6 +32,8 @@ export type InventoryRow = {
   priceSource: "fixed" | "market" | null;
   /** What this item WOULD sell for if it tracked market (market × markup) */
   marketSell: number | null;
+  /** TCGplayer product page — price verification, one click away */
+  tcgplayerUrl: string | null;
 };
 
 const PAGE_SIZES = [10, 25, 50, 100] as const;
@@ -233,7 +235,20 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
                 />
               </TableCell>
               <TableCell className="max-w-md">
-                <span className="block truncate font-medium">{row.title}</span>
+                {row.tcgplayerUrl ? (
+                  <a
+                    href={row.tcgplayerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Open on TCGplayer to verify pricing"
+                    className="block truncate font-medium underline-offset-2 hover:underline"
+                  >
+                    {row.title}
+                    <span className="ml-1 text-xs text-neutral-400">↗</span>
+                  </a>
+                ) : (
+                  <span className="block truncate font-medium">{row.title}</span>
+                )}
                 <span className="block truncate text-xs text-neutral-400">
                   {[
                     row.setName,

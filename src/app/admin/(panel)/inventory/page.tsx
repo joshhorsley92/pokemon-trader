@@ -30,6 +30,7 @@ export default async function InventoryPage() {
       productId: tables.inventoryItems.productId,
       source: tables.inventoryItems.source,
       marketPrice: tables.catalogProducts.marketPrice,
+      tcgplayerUrl: tables.catalogProducts.tcgplayerUrl,
       setName: tables.catalogGroups.name,
       cardNumber: sql<string | null>`(
         SELECT e->>'value' FROM jsonb_array_elements(
@@ -71,6 +72,7 @@ export default async function InventoryPage() {
       )?.price ?? null;
     return {
       marketSell,
+      tcgplayerUrl: row.tcgplayerUrl,
       id: row.id,
       title: row.title,
       category: row.category,

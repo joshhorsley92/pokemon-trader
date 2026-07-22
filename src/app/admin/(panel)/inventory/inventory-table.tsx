@@ -138,7 +138,11 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
                 </Badge>
               </TableCell>
               <TableCell>
-                <QtyCell id={row.id} quantity={row.quantity} />
+                <QtyCell
+                  key={`${row.id}:${row.quantity}`}
+                  id={row.id}
+                  quantity={row.quantity}
+                />
               </TableCell>
               <TableCell className="text-right">
                 <PriceCell
@@ -226,31 +230,64 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
 
 function QtyCell({ id, quantity }: { id: string; quantity: number }) {
   const [pending, startTransition] = useTransition();
-  function set(next: number) {
-    if (next < 0 || next === quantity) return;
+  // Typed edits live here until blur/Enter; +/- commit immediately. Remounted
+  // via `key` when the server sends a new quantity, so this stays in sync.
+  const [value, setValue] = useState(String(quantity));
+
+  function commit(next: number) {
+    if (!Number.isFinite(next) || next < 0) {
+      setValue(String(quantity)); // reject junk, restore server truth
+      return;
+    }
+    const whole = Math.floor(next);
+    setValue(String(whole));
+    if (whole === quantity) return;
     startTransition(async () => {
-      await setItemQuantity({ id, quantity: next });
+      await setItemQuantity({ id, quantity: whole });
     });
   }
+
+  // Step from what's on screen, not the server value, so +/- after typing
+  // does what it looks like it will.
+  const shown = Number(value.trim());
+  const base =
+    value.trim() !== "" && Number.isFinite(shown) && shown >= 0
+      ? Math.floor(shown)
+      : quantity;
+
   return (
     <div className="flex items-center justify-center gap-1">
       <button
         type="button"
-        onClick={() => set(quantity - 1)}
-        disabled={pending || quantity <= 0}
+        onClick={() => commit(base - 1)}
+        disabled={pending || base <= 0}
         className="flex h-6 w-6 items-center justify-center rounded border text-base leading-none hover:bg-neutral-100 disabled:opacity-40"
         aria-label="Decrease quantity"
       >
         −
       </button>
-      <span
-        className={`w-8 text-center tabular-nums ${pending ? "opacity-50" : ""}`}
-      >
-        {quantity}
-      </span>
+      <input
+        type="number"
+        min={0}
+        step="1"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => commit(Number(value.trim()))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setValue(String(quantity));
+            e.currentTarget.blur();
+          }
+        }}
+        aria-label="Quantity"
+        className={`w-12 rounded border px-1 py-0.5 text-center text-sm tabular-nums ${
+          pending ? "opacity-50" : ""
+        }`}
+      />
       <button
         type="button"
-        onClick={() => set(quantity + 1)}
+        onClick={() => commit(base + 1)}
         disabled={pending}
         className="flex h-6 w-6 items-center justify-center rounded border text-base leading-none hover:bg-neutral-100 disabled:opacity-40"
         aria-label="Increase quantity"
@@ -270,25 +307,34 @@ function PriceCell({
   price: number | null;
   priceSource: "fixed" | "market" | null;
 }) {
-  // A fixed price shows in the field; a market-tracked one leaves it blank with
-  // the market value as the placeholder (typing a number pins a fixed price;
-  // clearing it reverts to tracking market).
+  // The field always carries the effective price — the fixed one, or the live
+  // market value for a market-tracked item — so the number spinner steps from
+  // market instead of from 0. Market-tracked shows muted (the "mkt" badge
+  // names the source); it only becomes a pinned price once actually edited.
+  // Clearing the field still reverts to tracking market.
   // Remounted via `key` when the server sends a new price, so initial state is
   // always fresh — no effect-based re-sync needed.
-  const initial = priceSource === "fixed" && price !== null ? String(price) : "";
+  const initial = price !== null ? String(price) : "";
   const [value, setValue] = useState(initial);
+  const [dirty, setDirty] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function commit() {
+    // Untouched market-tracked rows must not get pinned just by being focused.
+    if (!dirty) return;
     const trimmed = value.trim();
     const next = trimmed === "" ? null : Number(trimmed);
     if (next !== null && (Number.isNaN(next) || next < 0)) {
       setValue(initial);
+      setDirty(false);
       return;
     }
     // No change vs. what's stored (fixed value or cleared/market).
     const storedFixed = priceSource === "fixed" && price !== null ? price : null;
-    if (next === storedFixed) return;
+    if (next === storedFixed) {
+      setDirty(false);
+      return;
+    }
     startTransition(async () => {
       await setItemPrice({ id, askingPrice: next });
     });
@@ -302,17 +348,23 @@ function PriceCell({
         min={0}
         step="1"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setDirty(true);
+        }}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            setValue(initial);
+            setDirty(false);
+            e.currentTarget.blur();
+          }
         }}
-        placeholder={
-          price !== null ? price.toFixed(0) : "market"
-        }
+        placeholder="market"
         className={`w-20 rounded border px-2 py-1 text-right text-sm tabular-nums ${
           pending ? "opacity-50" : ""
-        }`}
+        } ${priceSource === "market" && !dirty ? "text-neutral-400" : ""}`}
       />
       <span className="w-8 text-left text-[10px] text-neutral-400">
         {priceSource === "market" ? "mkt" : priceSource === "fixed" ? "fixed" : ""}

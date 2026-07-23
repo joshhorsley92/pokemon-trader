@@ -70,6 +70,7 @@ function useQuickTiles(): [boolean, () => void] {
 export function ShowClient({
   sessionId,
   sessionName,
+  shopName,
   transactions,
   totals,
   pending,
@@ -80,6 +81,7 @@ export function ShowClient({
 }: {
   sessionId: string;
   sessionName: string;
+  shopName: string;
   transactions: ShowTransaction[];
   totals: SessionTotals;
   pending: PendingTradeView[];
@@ -94,6 +96,10 @@ export function ShowClient({
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<CatalogHit[]>([]);
   const [tab, setTab] = useState<"search" | "case">("search");
+  // The running totals are the shop's private numbers — keep them hidden by
+  // default so a customer glancing at the phone can't read your margin; the
+  // operator taps to reveal.
+  const [showTotals, setShowTotals] = useState(false);
   // Quick tiles are opt-in (too many hot products for some shops) — a local,
   // per-device preference.
   const [tilesOn, toggleTiles] = useQuickTiles();
@@ -120,11 +126,29 @@ export function ShowClient({
               {totals.boughtUnits} bought · {totals.soldUnits} sold
             </p>
           </div>
-          <div className="flex items-center gap-3 text-right">
-            <Tally label="Paid out" value={-totals.paidOut} tone="out" />
-            <Tally label="Taken in" value={totals.takenIn} tone="in" />
-            <Tally label="Net" value={totals.net} tone="net" big />
-          </div>
+          {showTotals ? (
+            <div className="flex items-center gap-3 text-right">
+              <Tally label="Paid out" value={-totals.paidOut} tone="out" />
+              <Tally label="Taken in" value={totals.takenIn} tone="in" />
+              <Tally label="Net" value={totals.net} tone="net" big />
+              <button
+                type="button"
+                onClick={() => setShowTotals(false)}
+                title="Hide totals"
+                className="shrink-0 rounded-md border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-500 hover:bg-neutral-50"
+              >
+                Hide
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowTotals(true)}
+              className="shrink-0 rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+            >
+              👁 Show totals
+            </button>
+          )}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 text-xs">
           {totals.queuedLines > 0 ? (
@@ -166,7 +190,9 @@ export function ShowClient({
         </div>
       </div>
 
-      {boothUrl && qrSvg && <BoothPanel url={boothUrl} qrSvg={qrSvg} />}
+      {boothUrl && qrSvg && (
+        <BoothPanel url={boothUrl} qrSvg={qrSvg} shopName={shopName} />
+      )}
 
       {pending.length > 0 && <PendingPiles pending={pending} />}
 
@@ -890,8 +916,34 @@ function StepBtn({
 
 // ===== Booth QR =====
 
-function BoothPanel({ url, qrSvg }: { url: string; qrSvg: string }) {
+function BoothPanel({
+  url,
+  qrSvg,
+  shopName,
+}: {
+  url: string;
+  qrSvg: string;
+  shopName: string;
+}) {
   const [open, setOpen] = useState(false);
+  const [building, setBuilding] = useState(false);
+
+  async function downloadPoster() {
+    setBuilding(true);
+    try {
+      const png = await buildBoothPoster(shopName, qrSvg);
+      const a = document.createElement("a");
+      a.href = png;
+      const slug =
+        shopName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ||
+        "booth";
+      a.download = `${slug}-scan-to-trade.png`;
+      a.click();
+    } finally {
+      setBuilding(false);
+    }
+  }
+
   return (
     <div className="rounded-lg border bg-white shadow-sm">
       <button
@@ -913,10 +965,122 @@ function BoothPanel({ url, qrSvg }: { url: string; qrSvg: string }) {
             dangerouslySetInnerHTML={{ __html: qrSvg }}
           />
           <p className="mt-3 break-all text-xs text-neutral-400">{url}</p>
+          <button
+            type="button"
+            onClick={downloadPoster}
+            disabled={building}
+            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {building ? "Building…" : "⬇ Download printable poster (PNG)"}
+          </button>
+          <p className="mt-1.5 text-[11px] text-neutral-400">
+            A full-page “Scan here” sign to print and set on your table.
+          </p>
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * Render a print-ready booth poster (shop name, "Scan to trade", a big QR,
+ * and the link) to a PNG data URL, entirely client-side. The QR SVG is scaled
+ * up before rasterizing so the print stays crisp.
+ */
+function buildBoothPoster(shopName: string, qrSvg: string): Promise<string> {
+  const W = 1200;
+  const H = 1600;
+  const QR = 760;
+  // Bump the vector QR's size so it rasterizes crisp at poster scale.
+  const bigQr = qrSvg
+    .replace(/width="[^"]*"/, `width="${QR}"`)
+    .replace(/height="[^"]*"/, `height="${QR}"`);
+
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([bigQr], { type: "image/svg+xml;charset=utf-8" });
+    const objUrl = URL.createObjectURL(blob);
+    // window.Image — the DOM constructor, not the next/image component.
+    const img = new window.Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("no canvas context"));
+        return;
+      }
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = "center";
+
+      // Shop name
+      ctx.fillStyle = "#0f5132";
+      ctx.font =
+        "bold 64px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
+      ctx.fillText(shopName, W / 2, 150, W - 120);
+
+      // Headline
+      ctx.fillStyle = "#111111";
+      ctx.font =
+        "bold 128px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
+      ctx.fillText("Scan to Trade", W / 2, 320, W - 80);
+
+      // Rounded frame + QR
+      const qx = (W - QR) / 2;
+      const qy = 400;
+      ctx.fillStyle = "#f3f4f6";
+      const pad = 40;
+      roundRect(ctx, qx - pad, qy - pad, QR + pad * 2, QR + pad * 2, 32);
+      ctx.fill();
+      ctx.drawImage(img, qx, qy, QR, QR);
+
+      // Instructions
+      ctx.fillStyle = "#374151";
+      ctx.font =
+        "40px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
+      ctx.fillText(
+        "Point your phone camera at the code",
+        W / 2,
+        qy + QR + 130,
+        W - 80,
+      );
+      ctx.fillStyle = "#6b7280";
+      ctx.font =
+        "34px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif";
+      ctx.fillText(
+        "Build your trade, then bring it to the table.",
+        W / 2,
+        qy + QR + 190,
+        W - 80,
+      );
+
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objUrl);
+      reject(new Error("QR image failed to load"));
+    };
+    img.src = objUrl;
+  });
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 // ===== Per-trade cash settle (the negotiation fudge factor) =====

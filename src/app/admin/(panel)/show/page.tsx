@@ -130,6 +130,7 @@ export default async function ShowPage() {
       <ShowClient
         sessionId={open.id}
         sessionName={open.name}
+        shopName={settings.shop_name}
         transactions={transactions}
         totals={totals}
         pending={pending}

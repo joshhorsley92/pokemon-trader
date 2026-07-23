@@ -1,52 +1,65 @@
 /**
- * Throwaway diagnostic: hit the Full Grip buylist index from wherever this
- * runs (locally = residential IP, GitHub Actions = datacenter IP) under a few
- * header configurations and report status/timing. Purpose: figure out whether
- * Full Grip stalls our CI crawl because of the IP range or because the request
- * doesn't look browser-like enough. Delete once we've settled the fix.
+ * Throwaway diagnostic: reproduce the Full Grip crawl from wherever this runs
+ * (locally = residential, GitHub Actions = datacenter) to find where it stalls.
+ * The index loads fine from CI, so the nightly hang must be during the
+ * sustained set-page crawl — this walks the first N set pages with the real
+ * throttle and prints per-request status/timing so a rate-limit tarpit shows
+ * up as a jump in latency or a timeout. Delete once the fix is settled.
  */
 import dns from "node:dns";
 dns.setDefaultResultOrder("ipv4first");
 
-const URL = "https://www.fullgripgames.com/buylist/pokemon_singles/226";
+const BASE = "https://www.fullgripgames.com";
+const INDEX = "/buylist/pokemon_singles/226";
+const UA = "pokemon-trader/0.1.0"; // the exact UA the real crawl uses
+const THROTTLE_MS = 450; // matches the adapter
 const TIMEOUT_MS = 20_000;
+const MAX_SETS = 60; // enough sequential requests to trip a rate limit
 
-const BROWSER = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-  Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Cache-Control": "no-cache",
-  Pragma: "no-cache",
-  Referer: "https://www.fullgripgames.com/",
-  "Sec-Fetch-Dest": "document",
-  "Sec-Fetch-Mode": "navigate",
-  "Sec-Fetch-Site": "same-origin",
-  "Upgrade-Insecure-Requests": "1",
-};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const CONFIGS = {
-  "current (custom UA only)": { "User-Agent": "pokemon-trader/0.1.0" },
-  "browser UA only": { "User-Agent": BROWSER["User-Agent"] },
-  "full browser headers": BROWSER,
-};
-
-for (const [name, headers] of Object.entries(CONFIGS)) {
+async function get(path) {
   const t0 = Date.now();
-  try {
-    const res = await fetch(URL, {
-      headers,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    const body = await res.text();
-    console.log(
-      `[${name}] ${res.status} in ${Date.now() - t0}ms bytes=${body.length} server=${res.headers.get("server") || "-"} cf-ray=${res.headers.get("cf-ray") || "-"}`,
-    );
-  } catch (e) {
-    console.log(
-      `[${name}] FAILED after ${Date.now() - t0}ms: ${e.name} ${e.cause?.code || e.message}`,
-    );
-  }
+  const res = await fetch(BASE + path, {
+    headers: { "User-Agent": UA },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  const body = await res.text();
+  return { status: res.status, ms: Date.now() - t0, bytes: body.length, body };
 }
+
+function parseSetLinks(html) {
+  const out = new Map();
+  const re = /href="(\/buylist\/[a-z0-9_]+(?:-[a-z0-9_]+)?\/(\d+))"/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    if (m[1] === INDEX) continue;
+    out.set(m[1], m[1]);
+  }
+  return [...out.values()];
+}
+
+const idx = await get(INDEX);
+const links = parseSetLinks(idx.body);
+console.log(`index: ${idx.status} ${idx.ms}ms setLinks=${links.length}`);
+
+let slowest = 0;
+let requests = 0;
+const t0 = Date.now();
+for (const path of links.slice(0, MAX_SETS)) {
+  try {
+    const r = await get(`${path}?page=1&sort_by_price=0`);
+    requests++;
+    slowest = Math.max(slowest, r.ms);
+    const hasProducts = /<li class="product"/i.test(r.body);
+    const flag = r.ms > 5000 ? "  <-- SLOW" : r.status !== 200 ? "  <-- NON-200" : "";
+    console.log(`  #${requests} ${path} ${r.status} ${r.ms}ms products=${hasProducts}${flag}`);
+  } catch (e) {
+    console.log(`  #${requests + 1} ${path} STALLED/FAILED: ${e.name} ${e.cause?.code || e.message}`);
+    break;
+  }
+  await sleep(THROTTLE_MS);
+}
+console.log(
+  `crawled ${requests}/${MAX_SETS} set pages in ${((Date.now() - t0) / 1000).toFixed(1)}s, slowest ${slowest}ms`,
+);

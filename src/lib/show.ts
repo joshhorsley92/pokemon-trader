@@ -342,6 +342,75 @@ export async function voidTransaction(
 }
 
 /**
+ * Delete a closed deal from history (a mistake). Reverses every recorded
+ * transaction's inventory effect — a buy that became stock is removed, a sell
+ * that drew stock down is restocked — then deletes the transactions and the
+ * pending trade + its items so the deal leaves both the ledger and history.
+ */
+export async function deleteDeal(
+  shopId: string,
+  sessionId: string,
+  dealId: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [deal] = await tx
+      .select({ id: tables.showPendingTrades.id })
+      .from(tables.showPendingTrades)
+      .where(
+        and(
+          eq(tables.showPendingTrades.shopId, shopId),
+          eq(tables.showPendingTrades.sessionId, sessionId),
+          eq(tables.showPendingTrades.id, dealId),
+        ),
+      );
+    if (!deal) return;
+
+    const txns = await tx
+      .select()
+      .from(tables.showTransactions)
+      .where(
+        and(
+          eq(tables.showTransactions.shopId, shopId),
+          eq(tables.showTransactions.pendingId, dealId),
+        ),
+      );
+    for (const t of txns) {
+      if (!t.inventoryItemId) continue;
+      if (t.kind === "buy" && t.inventoryAction === "added") {
+        await tx
+          .delete(tables.inventoryItems)
+          .where(eq(tables.inventoryItems.id, t.inventoryItemId));
+      } else if (t.kind === "sell") {
+        await tx
+          .update(tables.inventoryItems)
+          .set({
+            quantity: sql`${tables.inventoryItems.quantity} + ${t.quantity}`,
+            status: "available",
+            updatedAt: new Date(),
+          })
+          .where(eq(tables.inventoryItems.id, t.inventoryItemId));
+      }
+    }
+
+    // Order matters: transactions and items reference the pending trade.
+    await tx
+      .delete(tables.showTransactions)
+      .where(
+        and(
+          eq(tables.showTransactions.shopId, shopId),
+          eq(tables.showTransactions.pendingId, dealId),
+        ),
+      );
+    await tx
+      .delete(tables.showPendingItems)
+      .where(eq(tables.showPendingItems.pendingId, dealId));
+    await tx
+      .delete(tables.showPendingTrades)
+      .where(eq(tables.showPendingTrades.id, dealId));
+  });
+}
+
+/**
  * Add every still-queued buy from a session to live inventory in one go (the
  * end-of-show "add what I bought to stock" checkbox).
  */

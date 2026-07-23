@@ -17,6 +17,7 @@ import {
   createPendingTrade,
   deleteSession,
   dismissPendingTrade,
+  deleteDeal,
   getSession,
   openSession,
   recordTransaction,
@@ -322,6 +323,17 @@ export async function voidShowTransaction(formData: FormData) {
   await voidTransaction(shopId, sessionId, txnId);
   revalidatePath("/admin/show");
   revalidatePath(`/admin/show/${sessionId}`);
+}
+
+export async function deleteDealAction(formData: FormData) {
+  await requireSession();
+  const shopId = await getCurrentShopId();
+  const sessionId = z.string().uuid().parse(formData.get("sessionId"));
+  const dealId = z.string().uuid().parse(formData.get("dealId"));
+  await deleteDeal(shopId, sessionId, dealId);
+  revalidatePath("/admin/show");
+  revalidatePath(`/admin/show/${sessionId}`);
+  revalidatePath("/admin/inventory");
 }
 
 export async function addQueuedBuys(formData: FormData) {

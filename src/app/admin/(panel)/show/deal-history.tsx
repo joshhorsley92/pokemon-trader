@@ -1,4 +1,5 @@
 import type { DealView } from "@/lib/show";
+import { DeleteDealButton } from "./delete-deal-button";
 
 function money(n: number): string {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -8,7 +9,13 @@ function money(n: number): string {
  * Reopenable history of closed deals. Native <details> so it renders the same
  * from the live Show screen (client tree) and the session summary (server).
  */
-export function DealHistory({ deals }: { deals: DealView[] }) {
+export function DealHistory({
+  deals,
+  sessionId,
+}: {
+  deals: DealView[];
+  sessionId: string;
+}) {
   if (deals.length === 0) return null;
   return (
     <div>
@@ -18,7 +25,7 @@ export function DealHistory({ deals }: { deals: DealView[] }) {
       <ul className="space-y-1.5">
         {deals.map((d) => (
           <li key={d.id}>
-            <DealCard deal={d} />
+            <DealCard deal={d} sessionId={sessionId} />
           </li>
         ))}
       </ul>
@@ -26,7 +33,7 @@ export function DealHistory({ deals }: { deals: DealView[] }) {
   );
 }
 
-function DealCard({ deal }: { deal: DealView }) {
+function DealCard({ deal, sessionId }: { deal: DealView; sessionId: string }) {
   const dismissed = deal.status === "dismissed";
   const net = deal.takenIn - deal.paidOut;
   return (
@@ -69,6 +76,7 @@ function DealCard({ deal }: { deal: DealView }) {
         <span aria-hidden="true" className="shrink-0 text-neutral-400">
           ▸
         </span>
+        <DeleteDealButton sessionId={sessionId} dealId={deal.id} />
       </summary>
 
       <div className="border-t px-3 py-2.5">

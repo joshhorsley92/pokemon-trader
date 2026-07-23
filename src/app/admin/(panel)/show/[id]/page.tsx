@@ -116,7 +116,7 @@ export default async function SessionPage({
         <DeleteSessionButton sessionId={id} />
       </div>
 
-      <DealHistory deals={deals} />
+      <DealHistory deals={deals} sessionId={id} />
 
       {/* Ledger */}
       <div>

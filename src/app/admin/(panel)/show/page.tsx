@@ -139,7 +139,7 @@ export default async function ShowPage() {
         inventory={inventory}
         hotBuys={hotBuys}
       />
-      <DealHistory deals={deals} />
+      <DealHistory deals={deals} sessionId={open.id} />
     </div>
   );
 }

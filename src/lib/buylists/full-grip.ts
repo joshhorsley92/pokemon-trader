@@ -23,6 +23,12 @@ const BASE = "https://www.fullgripgames.com";
 const INDEX_PATH = "/buylist/pokemon_singles/226";
 const THROTTLE_MS = 450;
 const CREDIT_MULTIPLIER = 1.3;
+// Hard ceiling on pages per set. Normally we stop when a page has no product
+// tiles, but some sets serve product tiles with zero buylist forms (store
+// isn't buying anything in that set) and never return an "empty" page — that
+// would loop forever. 24 products/page × 60 = 1,440 cards, far more than any
+// real set, so this only ever trips on the pathological case.
+const MAX_PAGES_PER_SET = 60;
 
 function decodeEntities(s: string): string {
   return s
@@ -109,7 +115,7 @@ export const fullGripAdapter: VendorAdapter = {
     }
 
     for (const set of sets) {
-      for (let page = 1; ; page++) {
+      for (let page = 1; page <= MAX_PAGES_PER_SET; page++) {
         const res = await fetchWithRetry(
           `${BASE}${set.path}?page=${page}&sort_by_price=0`,
         );
@@ -126,7 +132,10 @@ export const fullGripAdapter: VendorAdapter = {
         }));
         if (listings.length > 0) yield listings;
         await sleep(THROTTLE_MS);
-        if (!hasProducts) break;
+        // Stop at the true end (empty page) or the safety cap — the cap guards
+        // against sets that never return an empty page (product tiles but no
+        // buylist forms), which would otherwise paginate forever.
+        if (!hasProducts || page === MAX_PAGES_PER_SET) break;
       }
     }
   },

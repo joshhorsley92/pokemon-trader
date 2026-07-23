@@ -49,10 +49,11 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/** Returns true if the vendor synced cleanly, false if it failed. */
 async function syncVendor(
   adapter: VendorAdapter,
   index: Awaited<ReturnType<typeof loadCatalogIndex>>,
-): Promise<void> {
+): Promise<boolean> {
   const [run] = await db
     .insert(tables.buylistSyncRuns)
     .values({ vendor: adapter.vendor, status: "running" })
@@ -152,6 +153,7 @@ async function syncVendor(
     console.log(
       `[${adapter.vendor}] done: ${seen} listings, ${matched} matched (${((matched / Math.max(1, seen)) * 100).toFixed(1)}%)`,
     );
+    return true;
   } catch (err) {
     await db
       .update(tables.buylistSyncRuns)
@@ -164,7 +166,7 @@ async function syncVendor(
       })
       .where(eq(tables.buylistSyncRuns.id, run.id));
     console.error(`[${adapter.vendor}] FAILED:`, err);
-    process.exitCode = 1;
+    return false;
   }
 }
 
@@ -184,10 +186,31 @@ async function main() {
   const index = await loadCatalogIndex(db);
   console.log(`Catalog index: ${index.size.toLocaleString()} singles`);
 
+  const outcomes: { vendor: string; ok: boolean }[] = [];
   for (const adapter of adapters) {
-    await syncVendor(adapter, index);
+    const ok = await syncVendor(adapter, index);
+    outcomes.push({ vendor: adapter.vendor, ok });
   }
   await client.end();
+
+  // A single flaky vendor (transient outage, layout blip) shouldn't fail the
+  // whole nightly job — each vendor's pass/fail is already audited in
+  // buylist_sync_runs. Only exit non-zero if *every* vendor failed, which
+  // signals a systemic problem (network/DB/catalog) worth alerting on.
+  const failed = outcomes.filter((o) => !o.ok).map((o) => o.vendor);
+  const summary = outcomes
+    .map((o) => `${o.vendor} ${o.ok ? "✓" : "✗"}`)
+    .join(", ");
+  console.log(`Vendors: ${summary}`);
+  if (failed.length === outcomes.length) {
+    console.error(`All vendors failed (${failed.join(", ")}) — failing the run.`);
+    process.exitCode = 1;
+  } else if (failed.length > 0) {
+    console.warn(
+      `${failed.length}/${outcomes.length} vendor(s) failed: ${failed.join(", ")}. ` +
+        `Other vendors synced; not failing the job.`,
+    );
+  }
 }
 
 main().catch((err) => {

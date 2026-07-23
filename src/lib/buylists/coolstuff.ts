@@ -40,11 +40,19 @@ async function downloadSellList(url: string, retries = 4): Promise<CsiRow[]> {
         headers: { "User-Agent": "pokemon-trader/0.1.0" },
         signal: AbortSignal.timeout(90_000),
       });
-      if (!res.ok) throw new Error(`CSI sell-list file: HTTP ${res.status}`);
+      if (!res.ok) {
+        // A hard 4xx (403/404) won't fix itself — fail fast, don't burn
+        // retries. Only 429/5xx and socket drops (thrown below) are transient.
+        const fatal = !(res.status === 429 || res.status >= 500);
+        throw Object.assign(new Error(`CSI sell-list file: HTTP ${res.status}`), {
+          fatal,
+        });
+      }
       return (await res.json()) as CsiRow[];
     } catch (err) {
       lastError = err;
-      if (attempt < retries) await sleep(Math.min(15_000, 1000 * 2 ** attempt));
+      if ((err as { fatal?: boolean })?.fatal || attempt >= retries) break;
+      await sleep(Math.min(15_000, 1000 * 2 ** attempt));
     }
   }
   throw lastError;

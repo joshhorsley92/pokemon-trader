@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { projectSubmissionValue } from "@/lib/analyzer/projected";
-import { isQuoteExpired } from "@/lib/expiry";
+import { daysSince, isQuoteExpired } from "@/lib/expiry";
+import { quoteFromDb } from "@/lib/quote";
 import { getSettings } from "@/lib/settings";
 import { getCurrentShopId } from "@/lib/tenant";
 import { Badge } from "@/components/ui/badge";
@@ -111,6 +112,51 @@ export default async function SubmissionDetailPage({
         100;
   const margin =
     projectedRevenue === null ? null : Math.round((projectedRevenue - payout) * 100) / 100;
+
+  // Market data sync: requote the auto-priced lines at TODAY'S market through
+  // the same pricing engine (rules, hot buys, tiers, rounding). Internal
+  // decision aid for stale trades — nothing reaches the customer unless the
+  // admin sends a counter-offer.
+  const requote = await quoteFromDb(
+    quotedItems
+      .filter((i) => !i.graded && !i.manualQuote)
+      .map((i) => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        condition: i.condition,
+        printing: i.printing,
+      })),
+    submission.rateType,
+    settings,
+    shopId,
+  ).catch(() => null);
+  // Match requoted lines back to submission lines; a queue per key keeps
+  // duplicate product+condition rows paired up in order.
+  const todayQueue = new Map<string, number[]>();
+  for (const l of requote?.lines ?? []) {
+    const k = `${l.productId}|${l.printing ?? ""}|${l.condition ?? ""}`;
+    todayQueue.set(k, [...(todayQueue.get(k) ?? []), l.unitCredit]);
+  }
+  const todayFor = (i: (typeof quotedItems)[number]): number | null =>
+    todayQueue
+      .get(`${i.productId}|${i.printing ?? ""}|${i.condition ?? ""}`)
+      ?.shift() ?? null;
+  const daysOpen = daysSince(submission.createdAt);
+
+  // Column totals for the trade-in table (cents math, cent-safe)
+  const totals = quotedItems.reduce(
+    (t, i) => {
+      const now = currentById.get(i.productId);
+      t.qty += i.quantity;
+      t.then += Math.round(Number(i.unitMarketPrice) * 100) * i.quantity;
+      if (now != null) t.now += Math.round(Number(now) * 100) * i.quantity;
+      t.line +=
+        Math.round(Number(i.counterUnitCredit ?? i.unitCredit) * 100) *
+        i.quantity;
+      return t;
+    },
+    { qty: 0, then: 0, now: 0, line: 0 },
+  );
 
   return (
     <div className="space-y-6">
@@ -468,6 +514,25 @@ export default async function SubmissionDetailPage({
                 </TableRow>
               );
             })}
+            {quotedItems.length > 0 && (
+              <TableRow className="border-t-2 bg-neutral-50/60 font-semibold">
+                <TableCell>Total</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {totals.qty}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {money(totals.then / 100)}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {money(totals.now / 100)}
+                </TableCell>
+                <TableCell />
+                <TableCell />
+                <TableCell className="text-right tabular-nums">
+                  {money(totals.line / 100)}
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
 
@@ -547,6 +612,7 @@ export default async function SubmissionDetailPage({
 
       <CounterOfferForm
         submissionId={submission.id}
+        daysOpen={daysOpen}
         lines={quotedItems.map((item) => ({
           lineId: item.id,
           productName: item.condition
@@ -558,6 +624,8 @@ export default async function SubmissionDetailPage({
             item.counterUnitCredit === null
               ? null
               : Number(item.counterUnitCredit),
+          todayUnitCredit:
+            item.graded || item.manualQuote ? null : todayFor(item),
         }))}
       />
     </div>

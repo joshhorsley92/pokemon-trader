@@ -91,15 +91,19 @@ export function ReviewActions({
 
 export function CounterOfferForm({
   submissionId,
+  daysOpen,
   lines,
 }: {
   submissionId: string;
+  daysOpen: number;
   lines: {
     lineId: string;
     productName: string;
     quantity: number;
     unitCredit: number;
     counterUnitCredit: number | null;
+    /** What the pricing engine would quote at TODAY'S market; null = manual line */
+    todayUnitCredit: number | null;
   }[];
 }) {
   const [state, formAction, pending] = useActionState<CounterState, FormData>(
@@ -117,6 +121,31 @@ export function CounterOfferForm({
     0,
   );
 
+  // Market check — today's engine quote vs. the snapshot, for stale trades.
+  const todayKnown = lines.some((l) => l.todayUnitCredit !== null);
+  const quotedTotal = lines.reduce(
+    (sum, l) => sum + Math.round(l.unitCredit * 100) * l.quantity,
+    0,
+  );
+  const todayTotal = lines.reduce(
+    (sum, l) =>
+      sum + Math.round((l.todayUnitCredit ?? l.unitCredit) * 100) * l.quantity,
+    0,
+  );
+  const shiftPct =
+    quotedTotal > 0 ? ((todayTotal - quotedTotal) / quotedTotal) * 100 : 0;
+
+  function fillWithToday() {
+    setValues(
+      Object.fromEntries(
+        lines.map((l) => [
+          l.lineId,
+          l.todayUnitCredit ?? l.counterUnitCredit ?? l.unitCredit,
+        ]),
+      ),
+    );
+  }
+
   return (
     <CollapsibleCard
       title="Counter-offer"
@@ -130,6 +159,50 @@ export function CounterOfferForm({
     >
       <form action={formAction} className="space-y-4">
           <input type="hidden" name="id" value={submissionId} />
+          {todayKnown && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2">
+              <span className="text-sm text-sky-900">
+                <span className="font-semibold">Market check</span>
+                {daysOpen >= 1 &&
+                  ` — open ${daysOpen} day${daysOpen === 1 ? "" : "s"}`}
+                : at today&apos;s prices these lines would quote{" "}
+                <span className="font-semibold tabular-nums">
+                  ${(todayTotal / 100).toFixed(2)}
+                </span>
+                {todayTotal !== quotedTotal ? (
+                  <>
+                    {" "}
+                    vs ${(quotedTotal / 100).toFixed(2)} quoted (
+                    <span
+                      className={
+                        shiftPct < 0 ? "text-red-700" : "text-emerald-700"
+                      }
+                    >
+                      {shiftPct > 0 ? "+" : ""}
+                      {shiftPct.toFixed(1)}%
+                    </span>
+                    )
+                  </>
+                ) : (
+                  " — unchanged since the quote"
+                )}
+              </span>
+              {todayTotal !== quotedTotal && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={fillWithToday}
+                >
+                  Fill with today&apos;s rates
+                </Button>
+              )}
+              <span className="w-full text-xs text-sky-800/70">
+                This is only visible to you — the customer sees nothing until
+                you send the counter-offer.
+              </span>
+            </div>
+          )}
           <div className="space-y-2">
             {lines.map((line) => (
               <div
@@ -142,6 +215,18 @@ export function CounterOfferForm({
                   <span className="ml-2 text-xs text-neutral-400">
                     quoted ${line.unitCredit.toFixed(2)}/unit
                   </span>
+                  {line.todayUnitCredit !== null &&
+                    line.todayUnitCredit !== line.unitCredit && (
+                      <span
+                        className={`ml-2 text-xs font-medium ${
+                          line.todayUnitCredit < line.unitCredit
+                            ? "text-red-600"
+                            : "text-emerald-600"
+                        }`}
+                      >
+                        today ${line.todayUnitCredit.toFixed(2)}
+                      </span>
+                    )}
                 </span>
                 <div className="flex items-center gap-1">
                   <span className="text-sm text-neutral-500">$</span>

@@ -79,6 +79,7 @@ type ExtraItem = SearchHit & { quantity: number; condition: string };
 
 const VENDOR_LABELS: Record<string, string> = {
   card_cavern: "Card Cavern",
+  full_grip: "Full Grip Games",
   coolstuff: "CoolStuffInc",
   card_kingdom: "Card Kingdom",
 };

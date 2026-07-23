@@ -217,7 +217,7 @@ export const priceSnapshots = pgTable(
 export const buylistPrices = pgTable(
   "buylist_prices",
   {
-    // 'card_cavern' | 'coolstuff' (etc.) — text, not enum, so adding a
+    // 'card_cavern' | 'full_grip' | 'coolstuff' — text, not enum, so adding a
     // vendor never needs a migration
     vendor: text("vendor").notNull(),
     // Vendor's stable identifier for the listing (Shopify product id,

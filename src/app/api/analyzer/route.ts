@@ -17,10 +17,21 @@ const analyzeSchema = z.object({
         productId: z.number().int().positive(),
         quantity: z.number().int().min(1).max(999),
         condition: z.string().max(20).optional(),
+        printing: z.string().max(80).nullish(),
       }),
     )
     .max(500)
     .default([]),
+  // Per-productId reprice overrides from the operator (condition / printing)
+  overrides: z
+    .record(
+      z.string(),
+      z.object({
+        condition: z.string().max(20).nullish(),
+        printing: z.string().max(80).nullish(),
+      }),
+    )
+    .default({}),
 });
 
 export async function POST(request: NextRequest) {
@@ -38,7 +49,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Empty list" }, { status: 400 });
   }
   const shopId = await getCurrentShopId();
+  // JSON object keys are strings; the engine keys overrides by numeric productId.
+  const overrides: Record<number, { condition?: string | null; printing?: string | null }> =
+    {};
+  for (const [key, val] of Object.entries(parsed.data.overrides)) {
+    const id = Number(key);
+    if (Number.isInteger(id)) overrides[id] = val;
+  }
   return ndjsonAnalysis((progress) =>
-    analyzeListText(shopId, parsed.data.list, parsed.data.extra, progress),
+    analyzeListText(
+      shopId,
+      parsed.data.list,
+      parsed.data.extra,
+      progress,
+      overrides,
+    ),
   );
 }

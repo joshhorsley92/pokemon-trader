@@ -37,8 +37,11 @@ type ItemResult = {
     setName?: string | null;
     quantity: number;
     condition?: string | null;
+    printing?: string | null;
     marketPrice: number | null;
     category?: "singles" | "sealed";
+    tcgUrl?: string | null;
+    availablePrintings?: { subType: string; market: number | null }[] | null;
   };
   decision: Decision;
   bestOffer: {
@@ -121,6 +124,11 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
   const [renderLimit, setRenderLimit] = useState(RENDER_CHUNK);
   // Per-row decision overrides (click a badge to cycle)
   const [overrides, setOverrides] = useState<Record<number, Decision>>({});
+  // Per-productId reprice overrides (operator changes condition/printing and
+  // re-runs to get accurate pricing). Sent to the server on the pokemon path.
+  const [reprice, setReprice] = useState<
+    Record<number, { condition?: string | null; printing?: string | null }>
+  >({});
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -157,7 +165,29 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
     setFile({ name: f.name, content: await f.text() });
   }
 
-  async function analyzeNow() {
+  // Fresh run from the Analyze button — clears any prior reprice overrides.
+  function analyzeNow() {
+    setReprice({});
+    return runAnalyze({});
+  }
+
+  // Re-run after the operator changes a card's condition/printing, keeping the
+  // (updated) reprice overrides so the server prices against them.
+  function repriceRow(
+    productId: number,
+    patch: { condition?: string | null; printing?: string | null },
+  ) {
+    const next = { ...reprice, [productId]: { ...reprice[productId], ...patch } };
+    setReprice(next);
+    return runAnalyze(next);
+  }
+
+  async function runAnalyze(
+    repriceToSend: Record<
+      number,
+      { condition?: string | null; printing?: string | null }
+    >,
+  ) {
     setBusy(true);
     setError(null);
     setOverrides({});
@@ -178,6 +208,7 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
                     quantity: e.quantity,
                     condition: e.condition,
                   })),
+                  overrides: repriceToSend,
                 },
           ),
         },
@@ -646,7 +677,20 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
                 {renderedRows.map(({ r, i }) => (
                   <TableRow key={i}>
                     <TableCell>
-                      <div className="font-medium">{r.item.name}</div>
+                      <div className="font-medium">
+                        {r.item.name}
+                        {r.item.tcgUrl && (
+                          <a
+                            href={r.item.tcgUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ml-1.5 text-xs font-normal text-sky-600 underline decoration-dotted"
+                            title="Check the live TCGplayer listing"
+                          >
+                            TCG ↗
+                          </a>
+                        )}
+                      </div>
                       <div className="text-xs text-neutral-400">
                         {r.item.setName}
                         {r.flags.map((f) => (
@@ -659,11 +703,56 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
                           </Badge>
                         ))}
                       </div>
+                      {game === "pokemon" &&
+                        r.item.productId !== null &&
+                        r.item.availablePrintings && (
+                          <select
+                            value={r.item.printing ?? ""}
+                            disabled={busy}
+                            onChange={(e) =>
+                              repriceRow(r.item.productId as number, {
+                                printing: e.target.value || null,
+                              })
+                            }
+                            className="mt-1 rounded border bg-white px-1 py-0.5 text-xs"
+                            title="Reprice against a printing / edition"
+                          >
+                            <option value="">Default printing</option>
+                            {r.item.availablePrintings.map((p) => (
+                              <option key={p.subType} value={p.subType}>
+                                {p.subType}
+                                {p.market != null && ` — $${p.market.toFixed(2)}`}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                     </TableCell>
                     <TableCell className="text-right">
                       {r.item.quantity}
                     </TableCell>
-                    <TableCell>{r.item.condition ?? "NM"}</TableCell>
+                    <TableCell>
+                      {game === "pokemon" &&
+                      r.item.productId !== null &&
+                      r.item.category !== "sealed" ? (
+                        <select
+                          value={r.item.condition ?? "NM"}
+                          disabled={busy}
+                          onChange={(e) =>
+                            repriceRow(r.item.productId as number, {
+                              condition: e.target.value,
+                            })
+                          }
+                          className="rounded border bg-white px-1 py-0.5 text-xs"
+                          title="Reprice at a condition"
+                        >
+                          {["NM", "LP", "MP", "HP", "Damaged"].map((c) => (
+                            <option key={c}>{c}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        (r.item.condition ?? "NM")
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       {money(r.item.marketPrice)}
                     </TableCell>

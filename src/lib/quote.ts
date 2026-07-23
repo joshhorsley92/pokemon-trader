@@ -24,7 +24,7 @@ import {
   type QuotableProduct,
   type RateType,
 } from "@/lib/pricing";
-import type { ProductPrinting } from "@/lib/tcgcsv";
+import { priceForPrinting, type ProductPrinting } from "@/lib/tcgcsv";
 import type { AppSettings } from "@/lib/settings";
 
 export type TradeInInput = {
@@ -55,19 +55,6 @@ export type ManualLine = {
 };
 
 export type DbQuote = Quote & { manualLines: ManualLine[] };
-
-/** Resolve the market price for a chosen printing, falling back to headline. */
-function priceForPrinting(
-  printings: ProductPrinting[] | null,
-  printing: string | null | undefined,
-  headline: number | null,
-): number | null {
-  if (printing && printings) {
-    const match = printings.find((p) => p.subType === printing);
-    if (match && match.market !== null) return match.market;
-  }
-  return headline;
-}
 
 export async function quoteFromDb(
   items: TradeInInput[],

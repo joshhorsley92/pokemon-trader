@@ -81,6 +81,10 @@ export type AnalyzerItem = {
   printing?: string | null;
   /** Real TCGplayer product id only (never synthetic) — import CSV column */
   tcgplayerId?: number | null;
+  // UI passthrough (manual analyzer): link to check the live listing, and the
+  // printings the operator can switch between to reprice. Ignored by the math.
+  tcgUrl?: string | null;
+  availablePrintings?: { subType: string; market: number | null }[] | null;
   offers: VendorOffer[];
 };
 

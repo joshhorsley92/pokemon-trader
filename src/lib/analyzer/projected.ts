@@ -14,6 +14,7 @@ import {
   type AnalyzerSummary,
   type VendorOffer,
 } from "@/lib/analyzer/engine";
+import { priceForPrinting, type ProductPrinting } from "@/lib/tcgcsv";
 import type { AppSettings } from "@/lib/settings";
 
 export type ProjectedInputLine = {
@@ -50,6 +51,7 @@ export async function projectSubmissionValue(
         name: tables.catalogProducts.name,
         groupName: tables.catalogGroups.name,
         marketPrice: tables.catalogProducts.marketPrice,
+        printings: tables.catalogProducts.printings,
         category: sql<string>`COALESCE(${tables.catalogProducts.categoryOverride}, ${tables.catalogProducts.category})`,
       })
       .from(tables.catalogProducts)
@@ -94,8 +96,13 @@ export async function projectSubmissionValue(
       setName: product?.groupName ?? null,
       quantity: line.quantity,
       condition: line.condition,
-      marketPrice:
+      // Price against the customer's chosen printing (1st Ed vs Unlimited, holo
+      // vs reverse) rather than the headline, so the resale estimate is right.
+      marketPrice: priceForPrinting(
+        (product?.printings as ProductPrinting[] | null) ?? null,
+        line.printing,
         product?.marketPrice == null ? null : Number(product.marketPrice),
+      ),
       category:
         product?.category === "sealed" ? ("sealed" as const) : ("singles" as const),
       printing: line.printing,

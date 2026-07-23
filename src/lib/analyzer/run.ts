@@ -5,9 +5,19 @@
 import { inArray, and, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { getSettings } from "@/lib/settings";
+import {
+  priceForPrinting,
+  type ProductPrinting,
+} from "@/lib/tcgcsv";
 import { analyze, type AnalyzerItem, type AnalyzerSummary, type VendorOffer } from "./engine";
 import { getCatalogIndex } from "./match";
 import { parseList, type ParsedLine } from "./parse";
+
+/** Per-card operator overrides from the manual analyzer (condition/printing). */
+export type AnalyzerOverride = {
+  condition?: string | null;
+  printing?: string | null;
+};
 
 export type AnalyzedLine = {
   raw: string;
@@ -30,6 +40,7 @@ export type ExtraItem = {
   productId: number;
   quantity: number;
   condition?: string | null;
+  printing?: string | null;
 };
 
 export async function analyzeListText(
@@ -37,6 +48,8 @@ export async function analyzeListText(
   text: string,
   extra: ExtraItem[] = [],
   onProgress?: (message: string) => void,
+  /** Per-productId operator overrides (manual analyzer reprice) */
+  overrides: Record<number, AnalyzerOverride> = {},
 ): Promise<AnalyzeListResult> {
   const parsed = [
     ...parseList(text),
@@ -48,7 +61,7 @@ export async function analyzeListText(
         name: null,
         setName: null,
         cardNumber: null,
-        printing: null,
+        printing: e.printing ?? null,
         condition: e.condition ?? null,
         productId: e.productId,
       }),
@@ -81,17 +94,38 @@ export async function analyzeListText(
   ];
 
   onProgress?.("Loading vendor offers + computing decisions…");
-  const offerRows = productIds.length
-    ? await db
-        .select()
-        .from(tables.buylistPrices)
-        .where(
-          and(
-            inArray(tables.buylistPrices.productId, productIds),
-            eq(tables.buylistPrices.buying, true),
-          ),
-        )
-    : [];
+  // Per-product printings + TCGplayer link for the matched cards only (keeps
+  // this off the big cached catalog index). Printings let the operator switch
+  // holo/reverse/1st-edition and reprice; the URL is the "check it live" link.
+  const [offerRows, productMeta] = await Promise.all([
+    productIds.length
+      ? db
+          .select()
+          .from(tables.buylistPrices)
+          .where(
+            and(
+              inArray(tables.buylistPrices.productId, productIds),
+              eq(tables.buylistPrices.buying, true),
+            ),
+          )
+      : Promise.resolve([]),
+    productIds.length
+      ? db
+          .select({
+            id: tables.catalogProducts.id,
+            printings: tables.catalogProducts.printings,
+            tcgplayerUrl: tables.catalogProducts.tcgplayerUrl,
+          })
+          .from(tables.catalogProducts)
+          .where(inArray(tables.catalogProducts.id, productIds))
+      : Promise.resolve([]),
+  ]);
+  const printingsByProduct = new Map<number, ProductPrinting[]>();
+  const tcgUrlByProduct = new Map<number, string | null>();
+  for (const p of productMeta) {
+    printingsByProduct.set(p.id, (p.printings as ProductPrinting[] | null) ?? []);
+    tcgUrlByProduct.set(p.id, p.tcgplayerUrl);
+  }
   const offersByProduct = new Map<number, VendorOffer[]>();
   for (const row of offerRows) {
     if (row.productId === null) continue;
@@ -109,18 +143,39 @@ export async function analyzeListText(
 
   const items: AnalyzerItem[] = parsed.map((line: ParsedLine, i) => {
     const match = matches[i];
+    const productId = match?.entry.id ?? null;
+    const override = productId !== null ? overrides[productId] : undefined;
+    // Operator overrides win over whatever the list line said.
+    const condition =
+      override?.condition !== undefined ? override.condition : line.condition;
+    const printing =
+      override?.printing !== undefined ? override.printing : line.printing;
+    const printingList =
+      productId !== null ? (printingsByProduct.get(productId) ?? null) : null;
+    // Price against the chosen printing (holo/reverse/1st ed), not just the
+    // headline — this is what makes the reprice accurate.
+    const marketPrice = priceForPrinting(
+      printingList,
+      printing,
+      match?.entry.marketPrice ?? null,
+    );
     return {
-      productId: match?.entry.id ?? null,
+      productId,
       name: match?.entry.name ?? line.name ?? line.raw,
       setName: match?.entry.setName ?? line.setName,
       quantity: line.quantity,
-      condition: line.condition,
-      marketPrice: match?.entry.marketPrice ?? null,
+      condition,
+      marketPrice,
       category: match?.entry.category,
       cardNumber: match?.entry.cardNumber ?? line.cardNumber,
       rarity: match?.entry.rarity ?? null,
-      printing: line.printing,
-      tcgplayerId: match?.entry.id ?? null,
+      printing,
+      tcgplayerId: productId,
+      tcgUrl: productId !== null ? (tcgUrlByProduct.get(productId) ?? null) : null,
+      availablePrintings:
+        printingList && printingList.length > 1
+          ? printingList.map((p) => ({ subType: p.subType, market: p.market }))
+          : null,
       offers: match ? (offersByProduct.get(match.entry.id) ?? []) : [],
     };
   });

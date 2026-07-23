@@ -165,6 +165,23 @@ export type ProductPrinting = {
 };
 
 /**
+ * Market price for a chosen printing subType (e.g. "1st Edition Holofoil",
+ * "Reverse Holofoil"), falling back to the product's headline price when no
+ * printing is chosen or the chosen one has no market figure.
+ */
+export function priceForPrinting(
+  printings: ProductPrinting[] | null | undefined,
+  printing: string | null | undefined,
+  headline: number | null,
+): number | null {
+  if (printing && printings) {
+    const match = printings.find((p) => p.subType === printing);
+    if (match && match.market !== null) return match.market;
+  }
+  return headline;
+}
+
+/**
  * All printings for a product, ordered headline-first (the one pickPrice
  * mirrors into market_price), each with its effective market + low price.
  * This is what lets the customer pick "1st Edition Holofoil" vs "Unlimited"

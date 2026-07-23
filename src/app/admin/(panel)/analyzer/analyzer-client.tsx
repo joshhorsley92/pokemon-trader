@@ -129,6 +129,10 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
   const [reprice, setReprice] = useState<
     Record<number, { condition?: string | null; printing?: string | null }>
   >({});
+  // Row order: "entered" keeps the list stable (as parsed) so repricing a card
+  // doesn't shuffle it out from under you while you work down the list;
+  // "value" sorts most-valuable first.
+  const [sortMode, setSortMode] = useState<"entered" | "value">("entered");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -179,7 +183,9 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
   ) {
     const next = { ...reprice, [productId]: { ...reprice[productId], ...patch } };
     setReprice(next);
-    return runAnalyze(next);
+    // Keep the operator's place: don't reset tab/scroll or decision overrides
+    // when a single reprice re-runs the analysis.
+    return runAnalyze(next, { preserveView: true });
   }
 
   async function runAnalyze(
@@ -187,10 +193,11 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
       number,
       { condition?: string | null; printing?: string | null }
     >,
+    opts: { preserveView?: boolean } = {},
   ) {
     setBusy(true);
     setError(null);
-    setOverrides({});
+    if (!opts.preserveView) setOverrides({});
     setProgress("Uploading list…");
     try {
       const res = await fetch(
@@ -244,8 +251,10 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
       }
       if (!finalResult) throw new Error("Analysis ended without a result");
       setResult(finalResult);
-      setActiveTab("all");
-      setRenderLimit(RENDER_CHUNK);
+      if (!opts.preserveView) {
+        setActiveTab("all");
+        setRenderLimit(RENDER_CHUNK);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Analysis failed");
     } finally {
@@ -320,24 +329,24 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
     }
     return [...seen].sort();
   }, [indexedRows, overrides]);
-  // Filter to the active tab, most valuable first, rendered in capped chunks
-  const visibleRows = useMemo(
-    () =>
-      indexedRows
-        .filter(({ r, i }) => {
-          if (activeTab === "all") return true;
-          if (activeTab === "sealed") return r.item.category === "sealed";
-          const d = overrides[i] ?? r.decision;
-          if (activeTab === "tcg") return d === "TCG";
-          if (activeTab === "bulk") return d === "BULK";
-          return d === "BUYLIST" && r.bestOffer?.vendor === activeTab;
-        })
-        .sort(
-          (a, b) =>
-            (b.r.item.marketPrice ?? -1) - (a.r.item.marketPrice ?? -1),
-        ),
-    [indexedRows, activeTab, overrides],
-  );
+  // Filter to the active tab; keep "entered" order stable (don't sort) so a
+  // reprice never shuffles the list — only sort when the operator picks "value".
+  const visibleRows = useMemo(() => {
+    const filtered = indexedRows.filter(({ r, i }) => {
+      if (activeTab === "all") return true;
+      if (activeTab === "sealed") return r.item.category === "sealed";
+      const d = overrides[i] ?? r.decision;
+      if (activeTab === "tcg") return d === "TCG";
+      if (activeTab === "bulk") return d === "BULK";
+      return d === "BUYLIST" && r.bestOffer?.vendor === activeTab;
+    });
+    if (sortMode === "value") {
+      return [...filtered].sort(
+        (a, b) => (b.r.item.marketPrice ?? -1) - (a.r.item.marketPrice ?? -1),
+      );
+    }
+    return filtered;
+  }, [indexedRows, activeTab, overrides, sortMode]);
   const renderedRows = visibleRows.slice(0, renderLimit);
 
   // Every row with its UI override applied — the source for all exports
@@ -648,6 +657,28 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
               ))}
             </div>
             <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 rounded-md border bg-white p-0.5 text-xs">
+                <span className="px-1 text-neutral-400">Sort</span>
+                {(
+                  [
+                    ["entered", "As entered"],
+                    ["value", "Value ↓"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setSortMode(mode)}
+                    className={`rounded px-2 py-1 font-medium ${
+                      sortMode === mode
+                        ? "bg-neutral-900 text-white"
+                        : "text-neutral-600 hover:bg-neutral-100"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <p className="text-xs text-neutral-400">
                 Click a decision badge to override it.
               </p>

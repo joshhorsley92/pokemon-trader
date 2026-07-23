@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { CollapsibleCard } from "@/components/ui/collapsible-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -117,16 +118,17 @@ export function CounterOfferForm({
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Counter-offer</CardTitle>
-        <CardDescription>
+    <CollapsibleCard
+      title="Counter-offer"
+      description={
+        <>
           Adjust the per-unit credit on any line, then send. Sets the status to
           &quot;countered&quot;.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form action={formAction} className="space-y-4">
+        </>
+      }
+      defaultOpen={false}
+    >
+      <form action={formAction} className="space-y-4">
           <input type="hidden" name="id" value={submissionId} />
           <div className="space-y-2">
             {lines.map((line) => (
@@ -193,7 +195,6 @@ export function CounterOfferForm({
             <p className="text-sm text-green-600">Counter-offer saved.</p>
           )}
         </form>
-      </CardContent>
-    </Card>
+    </CollapsibleCard>
   );
 }

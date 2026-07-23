@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { CollapsibleCard } from "@/components/ui/collapsible-card";
 import {
   Table,
   TableBody,
@@ -161,240 +162,7 @@ export default async function SubmissionDetailPage({
         </div>
       </div>
 
-      {submission.customerMessage && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Customer message</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="whitespace-pre-wrap text-sm">{submission.customerMessage}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {photos.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Customer photos ({photos.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-3">
-              {photos.map((photo) => (
-                <a
-                  key={photo.id}
-                  href={`/api/photos/${photo.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={`/api/photos/${photo.id}`}
-                    alt="Customer trade-in photo"
-                    className="h-32 w-32 rounded-md object-cover shadow hover:opacity-90"
-                  />
-                </a>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">They&apos;re trading in</CardTitle>
-          <CardDescription>
-            Quoted prices were snapshotted at submission. &quot;Now&quot; shows
-            today&apos;s market price — large deltas are highlighted.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Product</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead className="text-right">Market @ quote</TableHead>
-                <TableHead className="text-right">Market now</TableHead>
-                <TableHead className="text-right">%</TableHead>
-                <TableHead className="text-right">Credit/unit</TableHead>
-                <TableHead className="text-right">Line</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {quotedItems.map((item) => {
-                const tcgUrl = tcgUrlById.get(item.productId) ?? null;
-                const nowRaw = currentById.get(item.productId);
-                const now = nowRaw == null ? null : Number(nowRaw);
-                const then = Number(item.unitMarketPrice);
-                const deltaPct = now !== null && then > 0 ? ((now - then) / then) * 100 : 0;
-                const bigDelta = Math.abs(deltaPct) >= 5;
-                // High-value cap: per-unit estimate at/above the threshold is
-                // finalized by hand. Derived from the stored payout, so no
-                // extra column needed. Graded/manual lines carry $0 here and
-                // have their own flags, so exclude them.
-                const highValue =
-                  !item.graded &&
-                  !item.manualQuote &&
-                  settings.manual_review_threshold > 0 &&
-                  Number(item.unitCredit) >= settings.manual_review_threshold;
-                return (
-                  <TableRow key={item.id}>
-                    <TableCell className="max-w-sm whitespace-normal font-medium">
-                      {tcgUrl ? (
-                        <a
-                          href={tcgUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Open on TCGplayer to verify pricing"
-                          className="underline-offset-2 hover:underline"
-                        >
-                          {item.productName}
-                          <span className="ml-1 text-xs text-neutral-400">↗</span>
-                        </a>
-                      ) : (
-                        item.productName
-                      )}
-                      {Number(item.hotBuyBonus) > 0 && (
-                        <span className="ml-2 rounded bg-orange-100 px-1.5 py-0.5 text-[11px] font-medium text-orange-800">
-                          🔥 hot buy +{Number(item.hotBuyBonus)}%
-                        </span>
-                      )}
-                      {item.graded && (
-                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
-                          {item.grader ?? "graded"} {item.grade ?? ""} · CUSTOM
-                          OFFER
-                        </span>
-                      )}
-                      {item.manualQuote && (
-                        <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800">
-                          NO MARKET PRICE · CUSTOM OFFER
-                        </span>
-                      )}
-                      {highValue && (
-                        <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
-                          OVER {money(settings.manual_review_threshold)} · TEAM
-                          QUOTE
-                        </span>
-                      )}
-                      {item.printing && (
-                        <span className="block text-xs font-normal text-neutral-500">
-                          {item.printing}
-                        </span>
-                      )}
-                      {item.manualQuote && (
-                        <span className="block text-xs font-normal text-violet-700">
-                          Sealed with no listings — often scarce vintage. Check
-                          auction comps before offering.
-                        </span>
-                      )}
-                      {highValue && (
-                        <span className="block text-xs font-normal text-amber-800">
-                          Payout over the {money(settings.manual_review_threshold)}{" "}
-                          cap. Estimate shown is a ballpark — confirm before
-                          countering.
-                        </span>
-                      )}
-                      {!item.graded && item.condition && (
-                        <span className="block text-xs font-normal text-neutral-500">
-                          {item.condition}
-                          {Number(item.conditionMultiplier) !== 1 &&
-                            ` (×${Number(item.conditionMultiplier)})`}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {item.quantity}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(then)}
-                    </TableCell>
-                    <TableCell
-                      className={`text-right tabular-nums ${
-                        bigDelta
-                          ? deltaPct > 0
-                            ? "font-semibold text-green-600"
-                            : "font-semibold text-red-600"
-                          : ""
-                      }`}
-                    >
-                      {now !== null ? (
-                        <>
-                          {money(now)}
-                          {bigDelta && (
-                            <span className="block text-xs">
-                              {deltaPct > 0 ? "+" : ""}
-                              {deltaPct.toFixed(1)}%
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {Number(item.appliedPercentage).toFixed(0)}%
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(item.unitCredit)}
-                      {item.counterUnitCredit !== null && (
-                        <span className="block text-xs text-amber-600">
-                          → {money(item.counterUnitCredit)}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(
-                        Number(item.counterUnitCredit ?? item.unitCredit) *
-                          item.quantity,
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-
-          {submission.bulkCount > 0 && (
-            <details className="mt-4 rounded-md border bg-neutral-50 px-3 py-2">
-              <summary className="cursor-pointer text-sm font-medium">
-                Bulk lot: {submission.bulkCount.toLocaleString()} cards @ $
-                {Number(submission.bulkRatePerThousand ?? 0).toFixed(2)}/1,000 ={" "}
-                {money(submission.bulkTotal)}
-                <span className="ml-2 text-xs font-normal text-neutral-500">
-                  (below the floor — click to see the cards)
-                </span>
-              </summary>
-              <ul className="mt-2 max-h-64 space-y-0.5 overflow-y-auto text-xs text-neutral-600">
-                {bulkItems.map((item) => (
-                  <li key={item.id} className="flex justify-between gap-2">
-                    <span className="min-w-0 flex-1 truncate">
-                      {item.quantity}×{" "}
-                      {tcgUrlById.get(item.productId) ? (
-                        <a
-                          href={tcgUrlById.get(item.productId)!}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="underline-offset-2 hover:underline"
-                        >
-                          {item.productName}
-                        </a>
-                      ) : (
-                        item.productName
-                      )}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-neutral-400">
-                      mkt {money(item.unitMarketPrice)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        </CardContent>
-      </Card>
-
+      {/* Quick read: projected resale value at the top for a fast decision */}
       {projectedRevenue !== null && (
         <Card className="border-emerald-200 bg-emerald-50/40">
           <CardHeader>
@@ -500,51 +268,282 @@ export default async function SubmissionDetailPage({
         </Card>
       )}
 
-      {tradeForItems.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              They want ({money(submission.tradeForTotal)})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Unit</TableHead>
-                  <TableHead className="text-right">Line</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tradeForItems.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell className="max-w-sm whitespace-normal font-medium">
-                      {item.itemTitle}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {item.quantity}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(item.unitPrice)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {money(Number(item.unitPrice) * item.quantity)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
+      {/* Decision panel — act right after the quick read */}
       <ReviewActions
         submissionId={submission.id}
         currentStatus={submission.status}
         adminNotes={submission.adminNotes}
       />
+
+      {submission.customerMessage && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Customer message</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="whitespace-pre-wrap text-sm">{submission.customerMessage}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {photos.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              Customer photos ({photos.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-3">
+              {photos.map((photo) => (
+                <a
+                  key={photo.id}
+                  href={`/api/photos/${photo.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={`/api/photos/${photo.id}`}
+                    alt="Customer trade-in photo"
+                    className="h-32 w-32 rounded-md object-cover shadow hover:opacity-90"
+                  />
+                </a>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <CollapsibleCard
+        title="They're trading in"
+        description={
+          <>
+            Quoted prices were snapshotted at submission. &quot;Now&quot; shows
+            today&apos;s market price — large deltas are highlighted.
+          </>
+        }
+        defaultOpen
+      >
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Product</TableHead>
+              <TableHead className="text-right">Qty</TableHead>
+              <TableHead className="text-right">Market @ quote</TableHead>
+              <TableHead className="text-right">Market now</TableHead>
+              <TableHead className="text-right">%</TableHead>
+              <TableHead className="text-right">Credit/unit</TableHead>
+              <TableHead className="text-right">Line</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {quotedItems.map((item) => {
+              const tcgUrl = tcgUrlById.get(item.productId) ?? null;
+              const nowRaw = currentById.get(item.productId);
+              const now = nowRaw == null ? null : Number(nowRaw);
+              const then = Number(item.unitMarketPrice);
+              const deltaPct = now !== null && then > 0 ? ((now - then) / then) * 100 : 0;
+              const bigDelta = Math.abs(deltaPct) >= 5;
+              // High-value cap: per-unit estimate at/above the threshold is
+              // finalized by hand. Derived from the stored payout, so no
+              // extra column needed. Graded/manual lines carry $0 here and
+              // have their own flags, so exclude them.
+              const highValue =
+                !item.graded &&
+                !item.manualQuote &&
+                settings.manual_review_threshold > 0 &&
+                Number(item.unitCredit) >= settings.manual_review_threshold;
+              return (
+                <TableRow key={item.id}>
+                  <TableCell className="max-w-sm whitespace-normal font-medium">
+                    {tcgUrl ? (
+                      <a
+                        href={tcgUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open on TCGplayer to verify pricing"
+                        className="underline-offset-2 hover:underline"
+                      >
+                        {item.productName}
+                        <span className="ml-1 text-xs text-neutral-400">↗</span>
+                      </a>
+                    ) : (
+                      item.productName
+                    )}
+                    {Number(item.hotBuyBonus) > 0 && (
+                      <span className="ml-2 rounded bg-orange-100 px-1.5 py-0.5 text-[11px] font-medium text-orange-800">
+                        🔥 hot buy +{Number(item.hotBuyBonus)}%
+                      </span>
+                    )}
+                    {item.graded && (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                        {item.grader ?? "graded"} {item.grade ?? ""} · CUSTOM
+                        OFFER
+                      </span>
+                    )}
+                    {item.manualQuote && (
+                      <span className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800">
+                        NO MARKET PRICE · CUSTOM OFFER
+                      </span>
+                    )}
+                    {highValue && (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                        OVER {money(settings.manual_review_threshold)} · TEAM
+                        QUOTE
+                      </span>
+                    )}
+                    {item.printing && (
+                      <span className="block text-xs font-normal text-neutral-500">
+                        {item.printing}
+                      </span>
+                    )}
+                    {item.manualQuote && (
+                      <span className="block text-xs font-normal text-violet-700">
+                        Sealed with no listings — often scarce vintage. Check
+                        auction comps before offering.
+                      </span>
+                    )}
+                    {highValue && (
+                      <span className="block text-xs font-normal text-amber-800">
+                        Payout over the {money(settings.manual_review_threshold)}{" "}
+                        cap. Estimate shown is a ballpark — confirm before
+                        countering.
+                      </span>
+                    )}
+                    {!item.graded && item.condition && (
+                      <span className="block text-xs font-normal text-neutral-500">
+                        {item.condition}
+                        {Number(item.conditionMultiplier) !== 1 &&
+                          ` (×${Number(item.conditionMultiplier)})`}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {item.quantity}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(then)}
+                  </TableCell>
+                  <TableCell
+                    className={`text-right tabular-nums ${
+                      bigDelta
+                        ? deltaPct > 0
+                          ? "font-semibold text-green-600"
+                          : "font-semibold text-red-600"
+                        : ""
+                    }`}
+                  >
+                    {now !== null ? (
+                      <>
+                        {money(now)}
+                        {bigDelta && (
+                          <span className="block text-xs">
+                            {deltaPct > 0 ? "+" : ""}
+                            {deltaPct.toFixed(1)}%
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {Number(item.appliedPercentage).toFixed(0)}%
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(item.unitCredit)}
+                    {item.counterUnitCredit !== null && (
+                      <span className="block text-xs text-amber-600">
+                        → {money(item.counterUnitCredit)}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(
+                      Number(item.counterUnitCredit ?? item.unitCredit) *
+                        item.quantity,
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+
+        {submission.bulkCount > 0 && (
+          <details className="mt-4 rounded-md border bg-neutral-50 px-3 py-2">
+            <summary className="cursor-pointer text-sm font-medium">
+              Bulk lot: {submission.bulkCount.toLocaleString()} cards @ $
+              {Number(submission.bulkRatePerThousand ?? 0).toFixed(2)}/1,000 ={" "}
+              {money(submission.bulkTotal)}
+              <span className="ml-2 text-xs font-normal text-neutral-500">
+                (below the floor — click to see the cards)
+              </span>
+            </summary>
+            <ul className="mt-2 max-h-64 space-y-0.5 overflow-y-auto text-xs text-neutral-600">
+              {bulkItems.map((item) => (
+                <li key={item.id} className="flex justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate">
+                    {item.quantity}×{" "}
+                    {tcgUrlById.get(item.productId) ? (
+                      <a
+                        href={tcgUrlById.get(item.productId)!}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline-offset-2 hover:underline"
+                      >
+                        {item.productName}
+                      </a>
+                    ) : (
+                      item.productName
+                    )}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-neutral-400">
+                    mkt {money(item.unitMarketPrice)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </CollapsibleCard>
+
+      {tradeForItems.length > 0 && (
+        <CollapsibleCard
+          title={`They want (${money(submission.tradeForTotal)})`}
+          defaultOpen
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Item</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+                <TableHead className="text-right">Unit</TableHead>
+                <TableHead className="text-right">Line</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tradeForItems.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell className="max-w-sm whitespace-normal font-medium">
+                    {item.itemTitle}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {item.quantity}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(item.unitPrice)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {money(Number(item.unitPrice) * item.quantity)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CollapsibleCard>
+      )}
 
       <CounterOfferForm
         submissionId={submission.id}

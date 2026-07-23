@@ -13,6 +13,10 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db, tables } from "@/db";
 import { conditionMultiplier } from "@/lib/conditions";
+import {
+  projectSubmissionValue,
+  type ProjectedInputLine,
+} from "@/lib/analyzer/projected";
 import { effectiveInventoryPrice } from "@/lib/inventory";
 import {
   dollarsUp,
@@ -406,6 +410,25 @@ export type PendingItemView = {
   unitPrice: number | null;
 };
 
+/**
+ * Auto buylist-analyzer readout for the operator: what you'd pay for the
+ * trade-in (give) cards vs. their best expected resale (vendor buylist / TCG /
+ * bulk), as a headline margin. Null when nothing is projectable (all graded or
+ * unmatched give lines).
+ */
+export type PendingProjection = {
+  /** What you pay for the give cards — giveTotal, in the trade's rate units */
+  pay: number;
+  /** Best expected resale of those cards (cash basis) */
+  resale: number;
+  /** resale − pay */
+  marginAbs: number;
+  /** margin as a % of pay; null when pay is 0 */
+  marginPct: number | null;
+  /** Graded give lines excluded from the estimate (need a custom offer) */
+  skippedGraded: number;
+};
+
 export type PendingTradeView = {
   id: string;
   label: string | null;
@@ -419,6 +442,8 @@ export type PendingTradeView = {
   /** Cash settle stored on the deal; hits the ledger when the trade closes */
   cashToCustomer: number;
   cashFromCustomer: number;
+  /** Auto-analysis of the give cards' resale value (null if none projectable) */
+  projected: PendingProjection | null;
 };
 
 export type PendingLineInput = {
@@ -544,6 +569,36 @@ export async function listPendingTrades(
     const onlyPending = priced.filter((p) => p.status === "pending");
     const giveTotal = sumLines(onlyPending.filter((p) => p.side === "give"));
     const wantTotal = sumLines(onlyPending.filter((p) => p.side === "want"));
+
+    // Auto-analysis: project resale value of the pending give (trade-in) cards.
+    // Only catalog-matched, non-graded lines can be priced by the engine.
+    const giveInputs: ProjectedInputLine[] = onlyPending
+      .filter((p) => p.side === "give" && p.productId !== null)
+      .map((p) => ({
+        productId: p.productId as number,
+        productName: p.title,
+        quantity: p.quantity,
+        condition: p.condition,
+        printing: p.printing,
+        graded: p.graded,
+      }));
+    const projection = giveInputs.length
+      ? await projectSubmissionValue(giveInputs, settings)
+      : null;
+    let projected: PendingProjection | null = null;
+    if (projection) {
+      const marginAbs =
+        Math.round((projection.projectedRevenue - giveTotal) * 100) / 100;
+      projected = {
+        pay: giveTotal,
+        resale: projection.projectedRevenue,
+        marginAbs,
+        marginPct:
+          giveTotal > 0 ? Math.round((marginAbs / giveTotal) * 1000) / 10 : null,
+        skippedGraded: projection.skippedGraded,
+      };
+    }
+
     views.push({
       id: trade.id,
       label: trade.label,
@@ -557,6 +612,7 @@ export async function listPendingTrades(
         trade.cashToCustomer === null ? 0 : Number(trade.cashToCustomer),
       cashFromCustomer:
         trade.cashFromCustomer === null ? 0 : Number(trade.cashFromCustomer),
+      projected,
     });
   }
   return views;

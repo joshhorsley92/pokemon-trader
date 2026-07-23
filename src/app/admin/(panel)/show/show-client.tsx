@@ -1128,6 +1128,48 @@ function PendingPile({ pile }: { pile: PendingTradeView }) {
         </div>
       </div>
 
+      {pile.projected && (
+        <div className="mt-2 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-sky-900">
+              Resale check
+              <span className="ml-1 font-normal text-sky-600">
+                (TCG / buylist / bulk)
+              </span>
+            </span>
+            <span className="text-sky-800">
+              est. {money(pile.projected.resale)}
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2 text-neutral-600">
+            <span>
+              You pay {money(pile.projected.pay)}{" "}
+              {pile.rateType === "cash" ? "cash" : "credit"}
+            </span>
+            <span
+              className={`font-semibold ${
+                pile.projected.marginAbs >= 0
+                  ? "text-emerald-700"
+                  : "text-red-600"
+              }`}
+            >
+              {pile.projected.marginAbs >= 0 ? "+" : "−"}
+              {money(Math.abs(pile.projected.marginAbs))}
+              {pile.projected.marginPct !== null &&
+                ` (${pile.projected.marginPct}%)`}{" "}
+              margin
+            </span>
+          </div>
+          {pile.projected.skippedGraded > 0 && (
+            <p className="mt-0.5 text-[11px] text-neutral-400">
+              {pile.projected.skippedGraded} graded line
+              {pile.projected.skippedGraded === 1 ? "" : "s"} excluded — price by
+              hand
+            </p>
+          )}
+        </div>
+      )}
+
       {liveItems.length === 0 && (
         <p className="mt-2 rounded border border-dashed border-neutral-300 bg-white/60 px-3 py-2 text-xs text-neutral-500">
           Empty trade — use <span className="font-semibold">＋ Add a card</span>{" "}

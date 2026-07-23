@@ -1418,10 +1418,6 @@ function StepOurCase({
       ) as string[],
     [inventory],
   );
-  const availableTypes = useMemo(
-    () => new Set(inventory.map((i) => i.category)),
-    [inventory],
-  );
   // Sets narrow to the chosen game so the dropdown never offers a set that
   // would return nothing under the current product-line filter.
   const availableSets = useMemo(
@@ -1556,25 +1552,17 @@ function StepOurCase({
             <option value="price_asc">Price: low → high</option>
           </select>
 
-          {availableTypes.size > 1 && (
-            <select
-              aria-label="Product type"
-              value={type}
-              onChange={(e) => setType(e.target.value as CaseType)}
-              className={selectClass}
-            >
-              <option value="all">All types</option>
-              {availableTypes.has("singles") && (
-                <option value="singles">Singles</option>
-              )}
-              {availableTypes.has("sealed") && (
-                <option value="sealed">Sealed</option>
-              )}
-              {availableTypes.has("graded") && (
-                <option value="graded">Graded</option>
-              )}
-            </select>
-          )}
+          <select
+            aria-label="Product type"
+            value={type}
+            onChange={(e) => setType(e.target.value as CaseType)}
+            className={selectClass}
+          >
+            <option value="all">All types</option>
+            <option value="singles">Singles</option>
+            <option value="sealed">Sealed</option>
+            <option value="graded">Graded</option>
+          </select>
 
           {availableSets.length > 1 && (
             <select

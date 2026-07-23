@@ -34,16 +34,56 @@ export type InventoryRow = {
   marketSell: number | null;
   /** TCGplayer product page — price verification, one click away */
   tcgplayerUrl: string | null;
+  createdAtMs: number;
 };
 
 const PAGE_SIZES = [10, 25, 50, 100] as const;
 
+const SORTS = {
+  newest: {
+    label: "Recently added",
+    cmp: (a: InventoryRow, b: InventoryRow) => b.createdAtMs - a.createdAtMs,
+  },
+  oldest: {
+    label: "Oldest first",
+    cmp: (a: InventoryRow, b: InventoryRow) => a.createdAtMs - b.createdAtMs,
+  },
+  az: {
+    label: "Name A–Z",
+    cmp: (a: InventoryRow, b: InventoryRow) =>
+      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
+  },
+  za: {
+    label: "Name Z–A",
+    cmp: (a: InventoryRow, b: InventoryRow) =>
+      b.title.localeCompare(a.title, undefined, { sensitivity: "base" }),
+  },
+  "price-high": {
+    label: "Price high → low",
+    // Unpriced rows sink to the bottom either direction
+    cmp: (a: InventoryRow, b: InventoryRow) =>
+      (b.price ?? -Infinity) - (a.price ?? -Infinity),
+  },
+  "price-low": {
+    label: "Price low → high",
+    cmp: (a: InventoryRow, b: InventoryRow) =>
+      (a.price ?? Infinity) - (b.price ?? Infinity),
+  },
+  "qty-high": {
+    label: "Qty high → low",
+    cmp: (a: InventoryRow, b: InventoryRow) => b.quantity - a.quantity,
+  },
+} satisfies Record<string, { label: string; cmp: (a: InventoryRow, b: InventoryRow) => number }>;
+
+type SortKey = keyof typeof SORTS;
+
 /**
- * Inventory list: instant client-side filter, alphabetical sort, pagination,
+ * Inventory list: instant client-side filter, selectable sort, pagination,
  * and inline quantity/price editing so common tweaks don't need the dialog.
  */
 export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
   const [filter, setFilter] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [pageSize, setPageSize] = useState<number>(25);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -97,10 +137,8 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
             .toLowerCase()
             .includes(f),
         );
-    return [...matched].sort((a, b) =>
-      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
-    );
-  }, [rows, filter]);
+    return [...matched].sort(SORTS[sortKey].cmp);
+  }, [rows, filter, sortKey]);
 
   // Clamp the page during render (derived, not stateful) so a shrinking filter
   // can't leave us on an out-of-range page.
@@ -122,6 +160,24 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
           placeholder="Search my inventory — name, condition, status…"
           className="w-full max-w-md rounded-lg border px-3 py-2 text-sm outline-none ring-emerald-300 focus:ring-2"
         />
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+            Sort
+            <select
+              value={sortKey}
+              onChange={(e) => {
+                setSortKey(e.target.value as SortKey);
+                setPage(1);
+              }}
+              className="rounded border px-2 py-1 text-sm"
+            >
+              {(Object.keys(SORTS) as SortKey[]).map((k) => (
+                <option key={k} value={k}>
+                  {SORTS[k].label}
+                </option>
+              ))}
+            </select>
+          </label>
         <label className="flex items-center gap-1.5 text-xs text-neutral-500">
           Show
           <select
@@ -140,6 +196,7 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
           </select>
           per page
         </label>
+        </div>
       </div>
 
       {/* Bulk pricing: acts on the checked rows, or everything when none are

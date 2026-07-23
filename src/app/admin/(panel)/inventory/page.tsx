@@ -29,6 +29,7 @@ export default async function InventoryPage() {
       status: tables.inventoryItems.status,
       productId: tables.inventoryItems.productId,
       source: tables.inventoryItems.source,
+      createdAt: tables.inventoryItems.createdAt,
       marketPrice: tables.catalogProducts.marketPrice,
       tcgplayerUrl: tables.catalogProducts.tcgplayerUrl,
       setName: tables.catalogGroups.name,
@@ -73,6 +74,7 @@ export default async function InventoryPage() {
     return {
       marketSell,
       tcgplayerUrl: row.tcgplayerUrl,
+      createdAtMs: row.createdAt?.getTime() ?? 0,
       id: row.id,
       title: row.title,
       category: row.category,

@@ -26,6 +26,91 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "
   completed: "outline",
 };
 
+// Terminal statuses drop out of the active queue into the archive. Expired
+// quotes archive too (dead — the customer never acted).
+const ARCHIVED_STATUSES = new Set(["accepted", "declined", "completed"]);
+
+type SubmissionRow = typeof tables.submissions.$inferSelect;
+
+function QueueTable({
+  rows,
+  emptyMessage,
+}: {
+  rows: SubmissionRow[];
+  emptyMessage: string;
+}) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Customer</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead className="text-right">Trade-in</TableHead>
+          <TableHead className="text-right">Wants</TableHead>
+          <TableHead>Payout</TableHead>
+          <TableHead>Submitted</TableHead>
+          <TableHead>Expires</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((s) => {
+          const expired = isQuoteExpired(s.status, s.quoteExpiresAt);
+          return (
+            <TableRow key={s.id}>
+              <TableCell>
+                <Link
+                  href={`/admin/submissions/${s.id}`}
+                  className="font-medium underline-offset-2 hover:underline"
+                >
+                  {s.customerName}
+                </Link>
+                <span className="block text-xs text-neutral-400">
+                  {s.customerEmail}
+                </span>
+              </TableCell>
+              <TableCell>
+                <Badge
+                  variant={expired ? "outline" : (STATUS_VARIANT[s.status] ?? "secondary")}
+                  className="capitalize"
+                >
+                  {expired ? "expired" : s.status.replace("_", " ")}
+                </Badge>
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                ${Number(s.tradeInTotal).toFixed(2)}
+                {s.counterTotal !== null && (
+                  <span className="block text-xs text-amber-600">
+                    → ${Number(s.counterTotal).toFixed(2)}
+                  </span>
+                )}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                ${Number(s.tradeForTotal).toFixed(2)}
+              </TableCell>
+              <TableCell className="text-sm">
+                {s.rateType === "store_credit" ? "Credit" : "Cash"}
+              </TableCell>
+              <TableCell className="text-sm text-neutral-500">
+                {s.createdAt?.toLocaleDateString()}
+              </TableCell>
+              <TableCell className="text-sm text-neutral-500">
+                {s.quoteExpiresAt.toLocaleDateString()}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+        {rows.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={7} className="py-8 text-center text-neutral-500">
+              {emptyMessage}
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
 export default async function AdminDashboard() {
   const shopId = await getCurrentShopId();
   const [submissions, [priceFreshness], [lastSync]] = await Promise.all([
@@ -34,7 +119,7 @@ export default async function AdminDashboard() {
       .from(tables.submissions)
       .where(eq(tables.submissions.shopId, shopId))
       .orderBy(desc(tables.submissions.createdAt))
-      .limit(100),
+      .limit(200),
     db
       .select({
         latest: sql<string | null>`max(${tables.catalogProducts.priceUpdatedAt})`,
@@ -53,6 +138,17 @@ export default async function AdminDashboard() {
     : null;
   const stale = isPriceDataStale(latestPrice);
   const emptyCatalog = Number(priceFreshness?.count ?? 0) === 0;
+
+  // Active queue = still needs attention; archive = accepted/declined/
+  // completed or expired, so terminal trades stop clogging the list.
+  const active: SubmissionRow[] = [];
+  const archived: SubmissionRow[] = [];
+  for (const s of submissions) {
+    const done =
+      ARCHIVED_STATUSES.has(s.status) ||
+      isQuoteExpired(s.status, s.quoteExpiresAt);
+    (done ? archived : active).push(s);
+  }
 
   return (
     <div className="space-y-4">
@@ -80,74 +176,24 @@ export default async function AdminDashboard() {
         </Alert>
       )}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Customer</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Trade-in</TableHead>
-            <TableHead className="text-right">Wants</TableHead>
-            <TableHead>Payout</TableHead>
-            <TableHead>Submitted</TableHead>
-            <TableHead>Expires</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {submissions.map((s) => {
-            const expired = isQuoteExpired(s.status, s.quoteExpiresAt);
-            return (
-              <TableRow key={s.id}>
-                <TableCell>
-                  <Link
-                    href={`/admin/submissions/${s.id}`}
-                    className="font-medium underline-offset-2 hover:underline"
-                  >
-                    {s.customerName}
-                  </Link>
-                  <span className="block text-xs text-neutral-400">
-                    {s.customerEmail}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <Badge
-                    variant={expired ? "outline" : (STATUS_VARIANT[s.status] ?? "secondary")}
-                    className="capitalize"
-                  >
-                    {expired ? "expired" : s.status.replace("_", " ")}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  ${Number(s.tradeInTotal).toFixed(2)}
-                  {s.counterTotal !== null && (
-                    <span className="block text-xs text-amber-600">
-                      → ${Number(s.counterTotal).toFixed(2)}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  ${Number(s.tradeForTotal).toFixed(2)}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {s.rateType === "store_credit" ? "Credit" : "Cash"}
-                </TableCell>
-                <TableCell className="text-sm text-neutral-500">
-                  {s.createdAt?.toLocaleDateString()}
-                </TableCell>
-                <TableCell className="text-sm text-neutral-500">
-                  {s.quoteExpiresAt.toLocaleDateString()}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-          {submissions.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={7} className="py-8 text-center text-neutral-500">
-                No trade proposals yet. Share the public link to get started.
-              </TableCell>
-            </TableRow>
-          )}
-        </TableBody>
-      </Table>
+      <QueueTable
+        rows={active}
+        emptyMessage="No open trades. Accepted and declined trades move to the archive below."
+      />
+
+      {archived.length > 0 && (
+        <details className="rounded-lg border bg-white">
+          <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium text-neutral-600 [&::-webkit-details-marker]:hidden">
+            <span className="text-neutral-400">▸</span> Archived ({archived.length})
+            <span className="ml-1 font-normal text-neutral-400">
+              — accepted, declined, completed & expired
+            </span>
+          </summary>
+          <div className="border-t px-1 pb-1">
+            <QueueTable rows={archived} emptyMessage="Nothing archived yet." />
+          </div>
+        </details>
+      )}
     </div>
   );
 }

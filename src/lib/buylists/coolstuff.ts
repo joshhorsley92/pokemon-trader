@@ -13,10 +13,42 @@
  * "Near Mint" for singles, "New" for sealed/bulk lots), BuyListNotes.
  * Everything listed has a real price; "not buying" rows simply don't appear.
  */
-import { fetchWithRetry, type VendorAdapter, type VendorListing } from "./types";
+import {
+  fetchWithRetry,
+  sleep,
+  type VendorAdapter,
+  type VendorListing,
+} from "./types";
 
 const BASE = "https://www.coolstuffinc.com";
 const SELL_LIST_URL = `${BASE}/main_selllist.php?s=pokemon`;
+
+/**
+ * Download + parse the ~19MB sell-list JSON, retrying the whole thing.
+ *
+ * fetchWithRetry only retries the fetch() call, which resolves once the
+ * response *headers* arrive — but this body is huge and CoolStuff's CDN
+ * intermittently kills the socket mid-download from datacenter IPs
+ * (UND_ERR_SOCKET), which surfaces during the body read, outside that retry.
+ * So retry the fetch *and* the .json() body read together.
+ */
+async function downloadSellList(url: string, retries = 4): Promise<CsiRow[]> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "pokemon-trader/0.1.0" },
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (!res.ok) throw new Error(`CSI sell-list file: HTTP ${res.status}`);
+      return (await res.json()) as CsiRow[];
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) await sleep(Math.min(15_000, 1000 * 2 ** attempt));
+    }
+  }
+  throw lastError;
+}
 
 type CsiRow = {
   PID?: number | string;
@@ -90,11 +122,7 @@ export const coolstuffAdapter: VendorAdapter = {
     if (Array.isArray(pointer.rows)) {
       rows = pointer.rows;
     } else if (typeof pointer.rows === "string") {
-      const fileRes = await fetchWithRetry(`${BASE}/${pointer.rows}`);
-      if (!fileRes.ok) {
-        throw new Error(`CSI sell-list file: HTTP ${fileRes.status}`);
-      }
-      rows = (await fileRes.json()) as CsiRow[];
+      rows = await downloadSellList(`${BASE}/${pointer.rows}`);
     } else {
       throw new Error("CSI getCards: unexpected rows payload");
     }

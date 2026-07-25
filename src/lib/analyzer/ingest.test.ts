@@ -57,6 +57,23 @@ describe("parseTextLine", () => {
     expect(parseTextLine("   ")).toBeNull();
   });
 
+  it("captures edition hints, alone and alongside a finish", () => {
+    // Edition drives price on vintage (1st Ed runs 4x-160x Unlimited), so
+    // dropping these words silently priced the card off the headline row.
+    expect(parseTextLine("1 Charizard 4/102 Unlimited")!.printing).toBe(
+      "Unlimited",
+    );
+    const firstEd = parseTextLine("1 Charizard 4/102 1st Edition Holofoil")!;
+    expect(firstEd.printing?.toLowerCase()).toBe("1st edition holofoil");
+    expect(firstEd.name).toBe("Charizard");
+    expect(firstEd.cardNumber).toBe("4/102");
+    expect(parseTextLine("Blastoise 2/102 First Edition")!.printing).toBe(
+      "First Edition",
+    );
+    // No edition word: still null, so the (now Unlimited) headline applies
+    expect(parseTextLine("1 Charizard 4/102")!.printing).toBeNull();
+  });
+
   it("parses dash-separated lines", () => {
     const l = parseTextLine("3 Iono - 185/193 - Paldea Evolved")!;
     expect(l.quantity).toBe(3);

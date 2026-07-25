@@ -142,20 +142,101 @@ export function classifyProduct(product: TcgcsvProduct): "singles" | "sealed" {
   return "sealed";
 }
 
+/** Matches "1st Edition", "1st Edition Holofoil", "First Edition", ... */
+const FIRST_EDITION_RE = /\b(?:1st|first)\s*edition\b/i;
+
 /**
  * Pick the price row to use when a product has multiple printings/subtypes.
  * Sealed products are "Normal"; for singles prefer Normal, then Holofoil.
+ *
+ * Vintage WOTC cards carry no Normal/Holofoil row at all — their subtypes are
+ * "1st Edition Holofoil" and "Unlimited Holofoil". Unlimited must win: 1st
+ * Edition asks run 4x-160x higher, so defaulting to them would quote a
+ * trade-in at wild multiples of what the card is (Dark Porygon2: $9,999 vs
+ * $80). Unlimited is also what most circulating copies actually are, and
+ * erring low fails safe — an operator can flip a confirmed 1st Edition up,
+ * but nobody can claw back an overpayment.
  */
 export function pickPrice(rows: TcgcsvPrice[]): TcgcsvPrice | undefined {
   if (rows.length <= 1) return rows[0];
   // Pokémon subtypes first, then MTG's "Foil" (harmless for Pokémon, which
   // never carries that subtype; correct for a foil-only Magic printing).
-  const order = ["Normal", "Holofoil", "Reverse Holofoil", "Foil"];
+  const order = [
+    "Normal",
+    "Holofoil",
+    "Reverse Holofoil",
+    "Foil",
+    "Unlimited",
+    "Unlimited Holofoil",
+  ];
   for (const subType of order) {
     const match = rows.find((r) => r.subTypeName === subType);
     if (match) return match;
   }
-  return rows[0];
+  // Unrecognized naming: still refuse to headline a 1st Edition row when any
+  // other printing exists.
+  return rows.find((r) => !FIRST_EDITION_RE.test(r.subTypeName)) ?? rows[0];
+}
+
+/**
+ * Canonical form of a printing/edition label, so loosely-written list input
+ * ("Reverse Holo", "1st Ed", "unlimited") lines up with TCGplayer's exact
+ * subtype names ("Reverse Holofoil", "1st Edition Holofoil", ...).
+ */
+function canonPrinting(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/\bfirst\s*edition\b/g, "1st edition")
+    .replace(/\b1st\s*ed\b\.?/g, "1st edition")
+    .replace(/\bunltd\b|\bunlim\b/g, "unlimited")
+    .replace(/\brev\b/g, "reverse")
+    // "holo" -> "holofoil", but leave an already-complete "holofoil" alone
+    .replace(/\bholo(?!foil)\b/g, "holofoil")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Resolve a free-text printing hint to one of the product's real subtypes.
+ * Returns null when nothing plausibly matches (caller falls back to headline).
+ *
+ * Exact-string comparison is not enough here: customer lists and vendor
+ * exports write "Reverse Holo" for "Reverse Holofoil" and bare "Unlimited"
+ * for "Unlimited Holofoil", and silently falling through to the headline
+ * price is how a $3.50 reverse holo got quoted at $0.25 — or a $2,146
+ * Unlimited Charizard at $100,000.
+ */
+export function resolvePrinting(
+  printings: ProductPrinting[] | null | undefined,
+  raw: string | null | undefined,
+): string | null {
+  if (!raw || !printings || printings.length === 0) return null;
+  const want = canonPrinting(raw);
+  if (!want) return null;
+  const candidates = printings.map((p) => ({
+    subType: p.subType,
+    canon: canonPrinting(p.subType),
+  }));
+
+  const exact = candidates.filter((c) => c.canon === want);
+  if (exact.length > 0) return pick(exact);
+  // Partial both ways: "unlimited" -> "unlimited holofoil", and
+  // "unlimited holofoil edition" -> "unlimited holofoil".
+  const partial = candidates.filter(
+    (c) => c.canon.includes(want) || want.includes(c.canon),
+  );
+  if (partial.length > 0) return pick(partial);
+  return null;
+
+  /** Unless the hint explicitly said 1st Edition, never resolve to one. */
+  function pick(list: { subType: string; canon: string }[]): string {
+    if (!FIRST_EDITION_RE.test(want)) {
+      const safe = list.find((c) => !FIRST_EDITION_RE.test(c.canon));
+      if (safe) return safe.subType;
+    }
+    return list[0].subType;
+  }
 }
 
 export type ProductPrinting = {
@@ -175,7 +256,13 @@ export function priceForPrinting(
   headline: number | null,
 ): number | null {
   if (printing && printings) {
-    const match = printings.find((p) => p.subType === printing);
+    // Loose match: list imports write "Reverse Holo" / "Unlimited", not
+    // TCGplayer's exact subtype. An exact-only compare quietly fell back to
+    // the headline price, which is the whole edition-mispricing bug.
+    const subType = resolvePrinting(printings, printing);
+    const match = subType
+      ? printings.find((p) => p.subType === subType)
+      : undefined;
     if (match && match.market !== null) return match.market;
   }
   return headline;

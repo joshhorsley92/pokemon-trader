@@ -102,7 +102,11 @@ export function parseCsvList(csvText: string): ParsedLine[] {
     // column ("Near Mint Holofoil")
     const conditionRaw = get(row, col.condition);
     let printing = get(row, col.printing);
-    if (!printing && conditionRaw && /holo|foil/i.test(conditionRaw)) {
+    if (
+      !printing &&
+      conditionRaw &&
+      /holo|foil|1st\s*ed|first\s*edition|unlimited/i.test(conditionRaw)
+    ) {
       printing = conditionRaw.replace(
         /^(near mint|lightly played|moderately played|heavily played|damaged)\s*/i,
         "",
@@ -128,6 +132,19 @@ const NUMBER_RE =
   /\b((?:[a-zA-Z]{1,4}\d{1,3}|\d{1,3}[a-zA-Z]?)\s*\/\s*(?:[a-zA-Z]{1,4})?\d{1,3}|(?:swsh|svp|sm|xy|hgss|dp|bw)\s*\d{1,3}|#\d{1,3})\b/i;
 const TRAILING_CONDITION_RE = /\b(NM|LP|MP|HP|DMG|Damaged)\b\.?\s*$/i;
 const FOIL_HINT_RE = /\b(reverse holo(?:foil)?|holo(?:foil)?|foil|full art|alt art)\b/i;
+// Edition is priced separately from finish on vintage cards — "1st Edition
+// Holofoil" and "Unlimited Holofoil" can differ by 100x — so it has to be
+// captured, not ignored. Both hints are combined into one printing string.
+const EDITION_HINT_RE = /\b(1st\s*ed(?:ition)?|first\s*edition|unlimited)\b/i;
+
+/** Cut a matched span out of a line, leaving tidy single spaces. */
+function cut(text: string, match: RegExpMatchArray): string {
+  return (
+    text.slice(0, match.index) + " " + text.slice(match.index! + match[0].length)
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export function parseTextLine(line: string): ParsedLine | null {
   let rest = line.trim();
@@ -147,15 +164,20 @@ export function parseTextLine(line: string): ParsedLine | null {
     rest = rest.slice(0, condMatch.index).trim();
   }
 
-  let printing: string | null = null;
+  // Edition first ("1st Edition Holofoil" -> edition "1st Edition", finish
+  // "Holofoil"), then finish, then recombine in TCGplayer's own word order.
+  const printingParts: string[] = [];
+  const edMatch = rest.match(EDITION_HINT_RE);
+  if (edMatch) {
+    printingParts.push(edMatch[1]);
+    rest = cut(rest, edMatch);
+  }
   const foilMatch = rest.match(FOIL_HINT_RE);
   if (foilMatch) {
-    printing = foilMatch[1];
-    rest = (
-      rest.slice(0, foilMatch.index) +
-      rest.slice(foilMatch.index! + foilMatch[0].length)
-    ).trim();
+    printingParts.push(foilMatch[1]);
+    rest = cut(rest, foilMatch);
   }
+  const printing = printingParts.length > 0 ? printingParts.join(" ") : null;
 
   let cardNumber: string | null = null;
   let name: string | null = null;

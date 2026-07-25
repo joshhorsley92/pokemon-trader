@@ -47,6 +47,13 @@ function defaultPrinting(
   return (
     bySubType("unlimited")?.subType ??
     bySubType("normal")?.subType ??
+    // Vintage holos carry no bare "Unlimited" row — they're "Unlimited
+    // Holofoil" vs "1st Edition Holofoil". Without this, the fallthrough to
+    // printings[0] defaulted them to 1st Edition, i.e. a Base Set Charizard
+    // priced off the $100,000 row.
+    printings.find((p) => /\bunlimited\b/i.test(p.subType))?.subType ??
+    printings.find((p) => !/\b(?:1st|first)\s*edition\b/i.test(p.subType))
+      ?.subType ??
     printings[0]?.subType ??
     null
   );

@@ -130,6 +130,11 @@ export type AnalyzerSummary = {
   >;
 };
 
+/** Local copies so this module keeps its no-import purity (see tcgcsv.ts). */
+const FIRST_EDITION_RE = /\b(?:1st|first)\s*edition\b/i;
+/** Any explicit edition call, so a stated "Unlimited" isn't nagged about. */
+const EDITION_STATED_RE = /\b(?:1st|first)\s*edition\b|\bunlimited\b/i;
+
 function toCents(d: number): number {
   return Math.round(d * 100);
 }
@@ -223,6 +228,17 @@ export function analyze(
     if (item.category === "sealed") flags.push("sealed");
     if (item.marketPrice !== null && item.marketPrice >= eco.high_value_flag) {
       flags.push("high value — verify");
+    }
+    // An unspecified vintage card is priced as Unlimited (see pickPrice) —
+    // safe against overpaying, but it would underpay a genuine 1st Edition.
+    // Surface the choice instead of silently making it.
+    const printings = item.availablePrintings ?? [];
+    if (
+      !EDITION_STATED_RE.test(item.printing ?? "") &&
+      printings.some((p) => FIRST_EDITION_RE.test(p.subType)) &&
+      printings.some((p) => !FIRST_EDITION_RE.test(p.subType))
+    ) {
+      flags.push("edition matters — confirm 1st Ed vs Unlimited");
     }
 
     // Best offer = highest condition-adjusted cash (fall back to credit-only

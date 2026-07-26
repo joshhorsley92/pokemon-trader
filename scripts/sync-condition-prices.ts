@@ -7,12 +7,16 @@
  *
  *   1. everything currently in inventory
  *   2. products seen on recent trade-ins / submissions
- *   3. products vendors are actively buying (analyzer decisions hinge on them)
+ *   3. products vendors actively buy at or above --min-value
+ *
+ * Sealed product is skipped entirely — it has no card condition, so the source
+ * only returns a "Sealed" variant we cannot use.
  *
  * Usage:
  *   npx tsx scripts/sync-condition-prices.ts [--limit N] [--stale-days N] [--dry]
  *     --limit       max products to refresh this run (default 200)
  *     --stale-days  skip products refreshed more recently than this (default 7)
+ *     --min-value   floor on vendor buy price for candidate 3 (default 5)
  *     --dry         show what would be fetched, spend no API calls
  */
 import "dotenv/config";
@@ -42,6 +46,7 @@ function flag(name: string, fallback: number): number {
 }
 const LIMIT = flag("limit", 200);
 const STALE_DAYS = flag("stale-days", 7);
+const MIN_VALUE = flag("min-value", 5);
 const DRY = process.argv.includes("--dry");
 
 // src/lib/condition-prices imports @/db, which builds its own client from
@@ -59,6 +64,13 @@ async function main() {
   }
 
   // Working set, priority-ordered, excluding anything refreshed recently.
+  // Sealed product is excluded everywhere: it has no card condition, so the
+  // source returns a single "Sealed" variant we can't use. Including it burned
+  // 55 of the first run's 120 calls for nothing.
+  //
+  // Vendor-buylist products are also floored by value — every matched listing
+  // is ~15k products, far beyond a metered plan, and precision on a $2 card
+  // can't change a decision.
   const rows = await db.execute(sql`
     WITH candidates AS (
       SELECT DISTINCT i.product_id AS id, 1 AS priority
@@ -72,9 +84,12 @@ async function main() {
       SELECT DISTINCT b.product_id, 3
         FROM buylist_prices b
        WHERE b.product_id IS NOT NULL AND b.buying = true
+         AND b.cash_price >= ${MIN_VALUE}
     )
     SELECT c.id, min(c.priority) AS priority
       FROM candidates c
+      JOIN catalog_products cp ON cp.id = c.id
+       AND COALESCE(cp.category_override, cp.category) <> 'sealed'
       LEFT JOIN (
         SELECT product_id, max(fetched_at) AS fetched_at
           FROM card_condition_prices GROUP BY product_id

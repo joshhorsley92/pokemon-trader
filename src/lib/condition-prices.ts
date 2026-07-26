@@ -78,6 +78,8 @@ export function ladderFor(
 
 export type EnsureLine = {
   productId: number | null;
+  /** Sealed product has no card condition — never worth a call */
+  category?: "singles" | "sealed" | null;
   condition: string | null | undefined;
   printing: string | null | undefined;
   marketPrice: number | null | undefined;
@@ -142,6 +144,7 @@ export async function ensureConditionPrices(
     (l) =>
       l.productId !== null &&
       Number.isInteger(l.productId) &&
+      l.category !== "sealed" &&
       (l.condition ?? "NM") !== "NM" &&
       (l.marketPrice ?? 0) >= minMarket,
   );
@@ -187,6 +190,7 @@ export async function ensureConditionPrices(
   const wanted = new Map<number, number>(); // productId -> market price
   for (const l of lines) {
     if (l.productId === null || !Number.isInteger(l.productId)) continue;
+    if (l.category === "sealed") continue;
     const cond = l.condition ?? "NM";
     if (cond === "NM") continue;
     const market = l.marketPrice ?? 0;

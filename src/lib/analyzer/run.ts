@@ -219,6 +219,7 @@ export async function analyzeListText(
       condition: it.condition,
       printing: it.printing,
       marketPrice: it.marketPrice,
+      category: it.category,
     })),
   );
   for (const it of items) {

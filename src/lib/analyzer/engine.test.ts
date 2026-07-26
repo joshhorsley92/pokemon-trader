@@ -308,16 +308,40 @@ describe("sale estimate capped at the lowest live listing", () => {
   const card = (over: Partial<AnalyzerItem>) =>
     item({ category: "singles", releaseYear: 1999, ...over });
 
-  it("uses the low ask when market sits above it", () => {
-    // Real case: Chansey (Base Set) market $65.45 but the cheapest live
-    // listing is $20.99 — you can't sell above the competition.
+  it("never caps an NM copy at the printing-level low ask", () => {
+    // Ninetales (Base Set 2): market/NM 32.99, low ask 16.99 — but that
+    // cheapest listing is a played copy (real LP 18.28 / MP 14.30), so an NM
+    // copy is still worth 32.99. Capping it was showing NM as 16.99.
     const out = analyze(
+      [card({ condition: "NM", marketPrice: 32.99, lowPrice: 16.99 })],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(32.99, 2);
+  });
+
+  it("ignores the printing-level low ask entirely", () => {
+    // The low ask carries no condition, so it can't bound a condition price.
+    // Without a ladder an LP copy is market x the curve (65.45 x 0.60), and
+    // the $20.99 low ask must not pull it anywhere.
+    const withLow = analyze(
       [card({ condition: "LP", marketPrice: 65.45, lowPrice: 20.99 })],
       eco,
       mult,
       DEFAULT_CONDITION_CURVE,
     );
-    expect(out.results[0].estSalePrice).toBeCloseTo(20.99, 2);
+    const withoutLow = analyze(
+      [card({ condition: "LP", marketPrice: 65.45, lowPrice: null })],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(withLow.results[0].estSalePrice).toBeCloseTo(39.27, 2);
+    expect(withLow.results[0].estSalePrice).toBeCloseTo(
+      withoutLow.results[0].estSalePrice!,
+      2,
+    );
   });
 
   it("uses the condition-adjusted market when it is the lower of the two", () => {
@@ -376,15 +400,17 @@ describe("real per-condition prices override every estimate", () => {
     }
   });
 
-  it("fixes the NM undervaluation the low-ask cap caused", () => {
-    const capped = analyze(
+  it("values NM at market with or without a ladder", () => {
+    // NM is the market price either way: the ladder's NM rung and TCGCSV's
+    // market price agree ($65.45), and the low ask never caps an NM copy.
+    const noLadder = analyze(
       [{ ...chansey("NM"), conditionLadder: null }],
       eco,
       mult,
       DEFAULT_CONDITION_CURVE,
     );
     const real = analyze([chansey("NM")], eco, mult, DEFAULT_CONDITION_CURVE);
-    expect(capped.results[0].estSalePrice).toBeCloseTo(20.99, 2);
+    expect(noLadder.results[0].estSalePrice).toBeCloseTo(65.45, 2);
     expect(real.results[0].estSalePrice).toBeCloseTo(65.45, 2);
   });
 
@@ -398,13 +424,42 @@ describe("real per-condition prices override every estimate", () => {
     expect(out.results[0].bestOffer?.cash).toBeCloseTo(20 * (15.64 / 65.45), 1);
   });
 
-  it("falls back to the estimate when a card has no ladder", () => {
+  it("falls back to the era curve when a card has no ladder", () => {
+    // No per-condition data -> market x vintage MP curve (0.40 - 0.05 band).
     const out = analyze(
       [{ ...chansey("MP"), conditionLadder: null }],
       eco,
       mult,
       DEFAULT_CONDITION_CURVE,
     );
-    expect(out.results[0].estSalePrice).toBeCloseTo(20.99, 2);
+    expect(out.results[0].estSalePrice).toBeCloseTo(65.45 * 0.4, 2);
+  });
+
+  it("anchors NM to TCGCSV market even when the ladder disagrees slightly", () => {
+    // Cached ladder can drift from tonight's market; NM must track market.
+    const out = analyze(
+      [
+        {
+          ...chansey("NM"),
+          marketPrice: 70,
+          conditionLadder: { ...CHANSEY, NM: 65.45 },
+        },
+      ],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(70, 2);
+  });
+
+  it("scales played rungs off market by the measured ratio", () => {
+    // LP ratio 25.80/65.45 = 0.394; if market moves to $70, LP follows.
+    const out = analyze(
+      [{ ...chansey("LP"), marketPrice: 70 }],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(70 * (25.8 / 65.45), 2);
   });
 });

@@ -40,6 +40,7 @@ type ItemResult = {
     printing?: string | null;
     marketPrice: number | null;
     lowPrice?: number | null;
+    conditionLadder?: Record<string, number> | null;
     category?: "singles" | "sealed";
     tcgUrl?: string | null;
     availablePrintings?: { subType: string; market: number | null }[] | null;
@@ -786,23 +787,17 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {/* Pricing basis: the lower of market and the lowest live
-                          listing — you can't sell above the cheapest copy. */}
-                      {money(
-                        r.item.lowPrice != null && r.item.marketPrice != null
-                          ? Math.min(r.item.lowPrice, r.item.marketPrice)
-                          : (r.item.lowPrice ?? r.item.marketPrice),
+                      {/* NM market price for this printing — the anchor every
+                          condition is scaled from. */}
+                      {money(r.item.marketPrice)}
+                      {r.item.conditionLadder && (
+                        <span
+                          className="block text-xs text-emerald-600"
+                          title="Real per-condition prices available for this card"
+                        >
+                          per-cond ✓
+                        </span>
                       )}
-                      {r.item.lowPrice != null &&
-                        r.item.marketPrice != null &&
-                        r.item.lowPrice < r.item.marketPrice && (
-                          <span
-                            className="block text-xs text-neutral-400"
-                            title="TCGplayer market price (trailing sales average)"
-                          >
-                            mkt {money(r.item.marketPrice)}
-                          </span>
-                        )}
                     </TableCell>
                     <TableCell>
                       {r.bestOffer ? (

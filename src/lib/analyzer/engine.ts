@@ -387,15 +387,20 @@ export function analyze(
         : null;
     // A real listed price for this exact condition needs no estimating and no
     // low-ask cap — it IS what the card sells for.
-    const ladderPrice = ladder?.[cond];
-    const estSale =
-      ladderPrice !== undefined && ladderPrice > 0
-        ? ladderPrice
-        : condAdjusted === null
-          ? null
-          : item.lowPrice != null && item.lowPrice > 0
-            ? Math.min(condAdjusted, item.lowPrice)
-            : condAdjusted;
+    // Sale price = TCGCSV market × the condition ratio. NM therefore always
+    // lands exactly on TCGCSV's market price (ratio 1), which is refreshed
+    // nightly for the whole catalog and free; the played rungs come from the
+    // per-condition source as a RATIO rather than an absolute, so a cached
+    // ladder that's a few days old still tracks a moving market.
+    //
+    // item.lowPrice is deliberately NOT used here. It's one number for the
+    // whole printing with no condition attached, so it can't act as a
+    // per-condition ceiling: Ninetales BS2's $16.99 low sits between its real
+    // LP ($18.28) and MP ($14.30) while NM is $32.99 — capping with it made NM
+    // read $16.99 and simultaneously overvalued played copies. The field stays
+    // plumbed for the day we get SKU-level (per-condition) lows, at which
+    // point min(conditionMarket, conditionLow) becomes the right rule.
+    const estSale = condAdjusted;
     // Multiplier already applied above, so price the net off estSale directly.
     const netTcg =
       estSale !== null

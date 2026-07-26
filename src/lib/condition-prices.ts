@@ -76,6 +76,103 @@ export function ladderFor(
   return byPrinting.get("normal") ?? null;
 }
 
+export type EnsureLine = {
+  productId: number | null;
+  condition: string | null | undefined;
+  printing: string | null | undefined;
+  marketPrice: number | null | undefined;
+};
+
+/**
+ * Cache-first read that lazily fills gaps for the lines that actually need it.
+ *
+ * The upstream plans are metered, so we never bulk-fetch. Two filters keep the
+ * spend tiny:
+ *  - NM needs nothing. Its price is TCGCSV's market price, refreshed nightly
+ *    for the whole catalog at no cost.
+ *  - Cheap cards need nothing. Being 30% off on a $0.40 common cannot change
+ *    a decision; being 30% off on a $60 holo can.
+ *
+ * Whatever's left is capped per run, most valuable first, so one big list
+ * can't drain a day's quota. Failures are swallowed — a missing ladder just
+ * falls back to the era curve.
+ */
+export async function ensureConditionPrices(
+  lines: EnsureLine[],
+  opts: {
+    minMarketPrice?: number;
+    maxCards?: number;
+    /** Don't re-fetch a card touched more recently than this. */
+    ttlHours?: number;
+  } = {},
+): Promise<ConditionPriceMap> {
+  const minMarket = opts.minMarketPrice ?? 5;
+  const maxCards = opts.maxCards ?? 60;
+  const ttlHours = opts.ttlHours ?? 24;
+
+  const productIds = [
+    ...new Set(
+      lines
+        .map((l) => l.productId)
+        .filter((id): id is number => Number.isInteger(id as number)),
+    ),
+  ];
+  const cached = await loadConditionPrices(productIds);
+  if (!justTcgConfigured()) return cached;
+
+  // When each product was last fetched — the guard against hammering the API
+  // with the same card every time a list is re-run.
+  const freshness = new Map<number, Date>();
+  if (productIds.length > 0) {
+    const rows = await db
+      .select({
+        productId: tables.cardConditionPrices.productId,
+        fetchedAt: sql<Date | null>`max(${tables.cardConditionPrices.fetchedAt})`,
+      })
+      .from(tables.cardConditionPrices)
+      .where(inArray(tables.cardConditionPrices.productId, productIds))
+      .groupBy(tables.cardConditionPrices.productId);
+    for (const r of rows) {
+      if (r.fetchedAt) freshness.set(r.productId, new Date(r.fetchedAt));
+    }
+  }
+  const cutoff = Date.now() - ttlHours * 60 * 60 * 1000;
+
+  // Worth fetching: off-condition, valuable enough to matter, and either
+  // unknown or past its TTL.
+  const wanted = new Map<number, number>(); // productId -> market price
+  for (const l of lines) {
+    if (l.productId === null || !Number.isInteger(l.productId)) continue;
+    const cond = l.condition ?? "NM";
+    if (cond === "NM") continue;
+    const market = l.marketPrice ?? 0;
+    if (market < minMarket) continue;
+    const lastFetched = freshness.get(l.productId);
+    // Known and still fresh -> leave it alone until the TTL lapses.
+    if (lastFetched !== undefined && lastFetched.getTime() > cutoff) continue;
+    if (!lastFetched && ladderFor(cached, l.productId, l.printing)) continue;
+    // Caveat: a card the source has no data for stores nothing, so it has no
+    // fetchedAt and can be retried on a later run. Cheap in practice — those
+    // retries ride along in an existing batch and the per-run cap bounds them.
+    wanted.set(l.productId, Math.max(wanted.get(l.productId) ?? 0, market));
+  }
+  if (wanted.size === 0) return cached;
+
+  const toFetch = [...wanted.entries()]
+    .sort((a, b) => b[1] - a[1]) // most valuable first
+    .slice(0, maxCards)
+    .map(([id]) => id);
+
+  try {
+    const res = await refreshConditionPrices(toFetch);
+    if (res.pricesStored === 0) return cached;
+    // Re-read so the caller sees everything, old and new, in one map.
+    return await loadConditionPrices(productIds);
+  } catch {
+    return cached; // never let a pricing-overlay hiccup break the run
+  }
+}
+
 export type RefreshResult = {
   productsRequested: number;
   pricesStored: number;

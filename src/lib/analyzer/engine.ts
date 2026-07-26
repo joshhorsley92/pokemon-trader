@@ -90,6 +90,14 @@ export type AnalyzerItem = {
    * competing copy. ~24h stale (TCGCSV daily mirror), like every price here.
    */
   lowPrice?: number | null;
+  /**
+   * Real per-condition prices for this card's printing, when we have them
+   * (JustTCG SKU data). condition -> price, e.g. {NM: 65.45, LP: 25.80,
+   * MP: 15.64, HP: 9.24, Damaged: 7.93}. Beats every estimate: the sale price
+   * is read straight off it, and the NM ratio replaces the era curve when
+   * discounting vendor buylist offers.
+   */
+  conditionLadder?: Record<string, number> | null;
   /** Sealed product (ETB, collection box, ...) — no buylists, never bulk */
   category?: "singles" | "sealed";
   // Export metadata (vendor pick lists, TCGplayer import CSV) — passed
@@ -331,15 +339,25 @@ export function analyze(
     // One condition ratio per card, shared by the buylist and TCG math. The
     // era curve needs the card's own market price and release year, so it
     // can't be hoisted out of the loop.
+    // Real measured ratio when we have per-condition prices, else the curve.
+    // ladder[cond]/ladder.NM is the market's own answer to "what does played
+    // cost?", so it retires the estimate for that card.
+    const ladder = item.conditionLadder ?? null;
+    const cond = item.condition ?? "NM";
+    const ladderMult =
+      ladder && ladder.NM && ladder.NM > 0 && ladder[cond] !== undefined
+        ? ladder[cond] / ladder.NM
+        : undefined;
     const condMult =
-      curve && item.category !== "sealed"
+      ladderMult ??
+      (curve && item.category !== "sealed"
         ? resolveSinglesMultiplier(
             curve,
             item.condition,
             item.releaseYear,
             item.marketPrice ?? 0,
           ).multiplier
-        : undefined;
+        : undefined);
 
     let best: Work["best"] = null;
     for (const offer of item.offers) {
@@ -367,12 +385,17 @@ export function analyze(
           (condMult ??
             conditionMultiplier(multipliers, "singles", item.condition ?? "NM"))
         : null;
+    // A real listed price for this exact condition needs no estimating and no
+    // low-ask cap — it IS what the card sells for.
+    const ladderPrice = ladder?.[cond];
     const estSale =
-      condAdjusted === null
-        ? null
-        : item.lowPrice != null && item.lowPrice > 0
-          ? Math.min(condAdjusted, item.lowPrice)
-          : condAdjusted;
+      ladderPrice !== undefined && ladderPrice > 0
+        ? ladderPrice
+        : condAdjusted === null
+          ? null
+          : item.lowPrice != null && item.lowPrice > 0
+            ? Math.min(condAdjusted, item.lowPrice)
+            : condAdjusted;
     // Multiplier already applied above, so price the net off estSale directly.
     const netTcg =
       estSale !== null

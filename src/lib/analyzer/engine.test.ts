@@ -354,3 +354,57 @@ describe("sale estimate capped at the lowest live listing", () => {
     expect(r.netTcg!).toBeGreaterThan(0);
   });
 });
+
+describe("real per-condition prices override every estimate", () => {
+  // Live JustTCG data for Chansey (Base Set, productId 42371), Holofoil.
+  const CHANSEY = { NM: 65.45, LP: 25.8, MP: 15.64, HP: 9.24, Damaged: 7.93 };
+  const chansey = (condition: string) =>
+    item({
+      condition,
+      category: "singles",
+      releaseYear: 1999,
+      marketPrice: 65.45,
+      lowPrice: 20.99,
+      printing: "Holofoil",
+      conditionLadder: CHANSEY,
+    });
+
+  it("prices straight off the ladder, ignoring curve and low-ask cap", () => {
+    for (const [condition, expected] of Object.entries(CHANSEY)) {
+      const out = analyze([chansey(condition)], eco, mult, DEFAULT_CONDITION_CURVE);
+      expect(out.results[0].estSalePrice).toBeCloseTo(expected, 2);
+    }
+  });
+
+  it("fixes the NM undervaluation the low-ask cap caused", () => {
+    const capped = analyze(
+      [{ ...chansey("NM"), conditionLadder: null }],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    const real = analyze([chansey("NM")], eco, mult, DEFAULT_CONDITION_CURVE);
+    expect(capped.results[0].estSalePrice).toBeCloseTo(20.99, 2);
+    expect(real.results[0].estSalePrice).toBeCloseTo(65.45, 2);
+  });
+
+  it("discounts vendor offers by the measured ratio, not the curve", () => {
+    // Real MP/NM = 15.64/65.45 = 0.239; the vintage curve would say 0.35.
+    const withOffer = {
+      ...chansey("MP"),
+      offers: [offer({ vendor: "coolstuff", cashPrice: 20, creditPrice: 25 })],
+    };
+    const out = analyze([withOffer], eco, mult, DEFAULT_CONDITION_CURVE);
+    expect(out.results[0].bestOffer?.cash).toBeCloseTo(20 * (15.64 / 65.45), 1);
+  });
+
+  it("falls back to the estimate when a card has no ladder", () => {
+    const out = analyze(
+      [{ ...chansey("MP"), conditionLadder: null }],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(20.99, 2);
+  });
+});

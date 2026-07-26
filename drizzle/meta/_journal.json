@@ -134,6 +134,13 @@
       "when": 1784649662150,
       "tag": "0018_absent_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785037246946,
+      "tag": "0019_jittery_bloodstorm",
+      "breakpoints": true
     }
   ]
 }

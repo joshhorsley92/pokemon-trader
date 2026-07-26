@@ -19,6 +19,7 @@ import {
   priceForPrinting,
   type ProductPrinting,
 } from "@/lib/tcgcsv";
+import { ladderFor, loadConditionPrices } from "@/lib/condition-prices";
 import type { AppSettings } from "@/lib/settings";
 
 export type ProjectedInputLine = {
@@ -95,6 +96,8 @@ export async function projectSubmissionValue(
     offersByProduct.set(row.productId, list);
   }
 
+  const conditionPrices = await loadConditionPrices(productIds);
+
   const items: AnalyzerItem[] = usable.map((line) => {
     const product = productById.get(line.productId);
     return {
@@ -117,6 +120,7 @@ export async function projectSubmissionValue(
         line.printing,
         product?.lowPrice == null ? null : Number(product.lowPrice),
       ),
+      conditionLadder: ladderFor(conditionPrices, line.productId, line.printing),
       category:
         product?.category === "sealed" ? ("sealed" as const) : ("singles" as const),
       printing: line.printing,

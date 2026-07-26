@@ -5,6 +5,7 @@
 import { inArray, and, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { getSettings } from "@/lib/settings";
+import { ladderFor, loadConditionPrices } from "@/lib/condition-prices";
 import {
   lowForPrinting,
   priceForPrinting,
@@ -155,6 +156,10 @@ export async function analyzeListText(
     offersByProduct.set(row.productId, list);
   }
 
+  // Real per-condition prices for the matched cards (cached; empty when the
+  // JustTCG overlay isn't configured, in which case the curve still applies).
+  const conditionPrices = await loadConditionPrices(productIds);
+
   const items: AnalyzerItem[] = parsed.map((line: ParsedLine, i) => {
     const match = matches[i];
     const productId = match?.entry.id ?? null;
@@ -187,6 +192,7 @@ export async function analyzeListText(
       condition,
       marketPrice,
       lowPrice,
+      conditionLadder: ladderFor(conditionPrices, productId, printing),
       category: match?.entry.category,
       cardNumber: match?.entry.cardNumber ?? line.cardNumber,
       rarity: match?.entry.rarity ?? null,

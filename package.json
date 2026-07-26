@@ -13,7 +13,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "sync": "tsx scripts/sync-tcgcsv.ts",
     "sync:full": "tsx scripts/sync-tcgcsv.ts --full",
-    "sync:buylists": "tsx scripts/sync-buylists.ts"
+    "sync:buylists": "tsx scripts/sync-buylists.ts",
+    "sync:conditions": "tsx scripts/sync-condition-prices.ts"
   },
   "dependencies": {
     "@netlify/database": "^1.1.0",

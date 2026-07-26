@@ -245,6 +245,42 @@ export const buylistPrices = pgTable(
   ],
 );
 
+/**
+ * Real per-condition market prices, cached.
+ *
+ * TCGCSV deliberately withholds TCGplayer's SKU layer ("this project does not
+ * share information about SKUs... you will not be able to get prices for each
+ * condition of a card"), so every condition number was previously ESTIMATED
+ * from the era curve. JustTCG sells that SKU layer keyed to the TCGplayer
+ * product ids we already store, one row per condition × printing.
+ *
+ * Cached because the metered plans are small (free tier: 1,000 calls/month) —
+ * we refresh a working set, not the whole 149k-product catalog.
+ */
+export const cardConditionPrices = pgTable(
+  "card_condition_prices",
+  {
+    productId: integer("product_id")
+      .notNull()
+      .references(() => catalogProducts.id),
+    /** Our normalized value: NM | LP | MP | HP | Damaged */
+    condition: text("condition").notNull(),
+    /** Printing as the source labels it ("Normal", "Foil", "1st Edition") */
+    printing: text("printing").notNull(),
+    price: numeric("price", { precision: 10, scale: 2 }),
+    /** TCGplayer SKU this price belongs to, when the source exposes it */
+    skuId: text("sku_id"),
+    source: text("source").notNull().default("justtcg"),
+    /** Source's own price timestamp, so we can show real freshness */
+    pricedAt: timestamp("priced_at", { withTimezone: true }),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.productId, t.condition, t.printing] }),
+    index("idx_cond_prices_product").on(t.productId),
+  ],
+);
+
 export const buylistSyncRuns = pgTable("buylist_sync_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   vendor: text("vendor").notNull(),

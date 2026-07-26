@@ -269,6 +269,26 @@ export function priceForPrinting(
 }
 
 /**
+ * Lowest live listing for a chosen printing, falling back to the product's
+ * headline low. Market price trails completed sales and on vintage often sits
+ * far above what's actually for sale, so this is the realistic sale ceiling.
+ */
+export function lowForPrinting(
+  printings: ProductPrinting[] | null | undefined,
+  printing: string | null | undefined,
+  headline: number | null,
+): number | null {
+  if (printing && printings) {
+    const subType = resolvePrinting(printings, printing);
+    const match = subType
+      ? printings.find((p) => p.subType === subType)
+      : undefined;
+    if (match && match.low !== null) return match.low;
+  }
+  return headline;
+}
+
+/**
  * All printings for a product, ordered headline-first (the one pickPrice
  * mirrors into market_price), each with its effective market + low price.
  * This is what lets the customer pick "1st Edition Holofoil" vs "Unlimited"

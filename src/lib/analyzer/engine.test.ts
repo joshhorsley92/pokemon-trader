@@ -303,3 +303,54 @@ describe("era condition curve in the analyzer", () => {
     expect(curved.results[0].estSalePrice).toBeCloseTo(8.88, 2);
   });
 });
+
+describe("sale estimate capped at the lowest live listing", () => {
+  const card = (over: Partial<AnalyzerItem>) =>
+    item({ category: "singles", releaseYear: 1999, ...over });
+
+  it("uses the low ask when market sits above it", () => {
+    // Real case: Chansey (Base Set) market $65.45 but the cheapest live
+    // listing is $20.99 — you can't sell above the competition.
+    const out = analyze(
+      [card({ condition: "LP", marketPrice: 65.45, lowPrice: 20.99 })],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(20.99, 2);
+  });
+
+  it("uses the condition-adjusted market when it is the lower of the two", () => {
+    // Rising market: low ask above market -> market wins, still the minimum.
+    const out = analyze(
+      [card({ condition: "NM", marketPrice: 10, lowPrice: 14, releaseYear: 2024 })],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(10, 2);
+  });
+
+  it("falls back to market x condition when there is no low price", () => {
+    const out = analyze(
+      [card({ condition: "MP", marketPrice: 100, lowPrice: null, releaseYear: 2024 })],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    expect(out.results[0].estSalePrice).toBeCloseTo(65, 2); // modern MP 0.65
+  });
+
+  it("keeps the TCG net consistent with the capped sale price", () => {
+    const out = analyze(
+      [card({ condition: "LP", marketPrice: 65.45, lowPrice: 20.99 })],
+      eco,
+      mult,
+      DEFAULT_CONDITION_CURVE,
+    );
+    const r = out.results[0];
+    // Net is fees/overhead off the capped sale price, never off raw market.
+    expect(r.netTcg!).toBeLessThan(r.estSalePrice!);
+    expect(r.netTcg!).toBeGreaterThan(0);
+  });
+});

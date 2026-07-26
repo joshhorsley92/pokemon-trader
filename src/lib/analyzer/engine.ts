@@ -82,6 +82,14 @@ export type AnalyzerItem = {
   condition?: string | null;
   /** TCGplayer market price (NM), dollars */
   marketPrice: number | null;
+  /**
+   * Current lowest live listing, dollars. Market price is a trailing average
+   * of completed sales and on vintage often sits far above what's actually
+   * for sale (Base Set Chansey: market $65.45 vs $20.99 lowest ask), so the
+   * realistic sale estimate is capped here — you can't sell above the cheapest
+   * competing copy. ~24h stale (TCGCSV daily mirror), like every price here.
+   */
+  lowPrice?: number | null;
   /** Sealed product (ETB, collection box, ...) — no buylists, never bulk */
   category?: "singles" | "sealed";
   // Export metadata (vendor pick lists, TCGplayer import CSV) — passed
@@ -294,6 +302,8 @@ export function analyze(
     flags: string[];
     /** Resolved condition ratio for this card (curve when available). */
     condMult: number;
+    /** Condition-adjusted sale price, capped at the lowest live listing. */
+    estSale: number | null;
   };
 
   const work: Work[] = items.map((item) => {
@@ -349,9 +359,24 @@ export function analyze(
       }
     }
 
-    const netTcg =
+    // Realistic sale price: market discounted for condition, then capped at
+    // the cheapest live listing — you can't sell above the competition.
+    const condAdjusted =
       item.marketPrice !== null
-        ? netTcgUnit(item.marketPrice, item.condition, eco, multipliers, condMult)
+        ? item.marketPrice *
+          (condMult ??
+            conditionMultiplier(multipliers, "singles", item.condition ?? "NM"))
+        : null;
+    const estSale =
+      condAdjusted === null
+        ? null
+        : item.lowPrice != null && item.lowPrice > 0
+          ? Math.min(condAdjusted, item.lowPrice)
+          : condAdjusted;
+    // Multiplier already applied above, so price the net off estSale directly.
+    const netTcg =
+      estSale !== null
+        ? netTcgUnit(estSale, item.condition, eco, multipliers, 1)
         : null;
 
     // Vendor buylists occasionally publish glitched prices (observed live:
@@ -375,6 +400,7 @@ export function analyze(
       condMult:
         condMult ??
         conditionMultiplier(multipliers, "singles", item.condition ?? "NM"),
+      estSale,
     };
   });
 
@@ -406,13 +432,7 @@ export function analyze(
   const results: ItemResult[] = work.map((w) => ({
     item: w.item,
     estSalePrice:
-      w.item.marketPrice !== null
-        ? toDollars(
-            Math.round(
-              toCents(w.item.marketPrice) * w.condMult,
-            ),
-          )
-        : null,
+      w.estSale !== null ? toDollars(Math.round(toCents(w.estSale))) : null,
     decision: w.decision,
     bestOffer: w.best
       ? {

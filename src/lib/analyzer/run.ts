@@ -6,6 +6,7 @@ import { inArray, and, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { getSettings } from "@/lib/settings";
 import {
+  lowForPrinting,
   priceForPrinting,
   type ProductPrinting,
 } from "@/lib/tcgcsv";
@@ -115,6 +116,7 @@ export async function analyzeListText(
             id: tables.catalogProducts.id,
             printings: tables.catalogProducts.printings,
             tcgplayerUrl: tables.catalogProducts.tcgplayerUrl,
+            lowPrice: tables.catalogProducts.lowPrice,
             publishedOn: tables.catalogGroups.publishedOn,
           })
           .from(tables.catalogProducts)
@@ -128,9 +130,11 @@ export async function analyzeListText(
   const printingsByProduct = new Map<number, ProductPrinting[]>();
   const tcgUrlByProduct = new Map<number, string | null>();
   const yearByProduct = new Map<number, number | null>();
+  const lowByProduct = new Map<number, number | null>();
   for (const p of productMeta) {
     printingsByProduct.set(p.id, (p.printings as ProductPrinting[] | null) ?? []);
     tcgUrlByProduct.set(p.id, p.tcgplayerUrl);
+    lowByProduct.set(p.id, p.lowPrice === null ? null : Number(p.lowPrice));
     // Release year drives the condition-curve era (vintage vs modern).
     const year = p.publishedOn ? Number(String(p.publishedOn).slice(0, 4)) : null;
     yearByProduct.set(p.id, Number.isFinite(year) ? year : null);
@@ -169,6 +173,12 @@ export async function analyzeListText(
       printing,
       match?.entry.marketPrice ?? null,
     );
+    // Lowest live listing for the same printing — caps the sale estimate.
+    const lowPrice = lowForPrinting(
+      printingList,
+      printing,
+      productId !== null ? (lowByProduct.get(productId) ?? null) : null,
+    );
     return {
       productId,
       name: match?.entry.name ?? line.name ?? line.raw,
@@ -176,6 +186,7 @@ export async function analyzeListText(
       quantity: line.quantity,
       condition,
       marketPrice,
+      lowPrice,
       category: match?.entry.category,
       cardNumber: match?.entry.cardNumber ?? line.cardNumber,
       rarity: match?.entry.rarity ?? null,

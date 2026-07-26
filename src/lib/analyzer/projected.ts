@@ -14,7 +14,11 @@ import {
   type AnalyzerSummary,
   type VendorOffer,
 } from "@/lib/analyzer/engine";
-import { priceForPrinting, type ProductPrinting } from "@/lib/tcgcsv";
+import {
+  lowForPrinting,
+  priceForPrinting,
+  type ProductPrinting,
+} from "@/lib/tcgcsv";
 import type { AppSettings } from "@/lib/settings";
 
 export type ProjectedInputLine = {
@@ -51,6 +55,7 @@ export async function projectSubmissionValue(
         name: tables.catalogProducts.name,
         groupName: tables.catalogGroups.name,
         marketPrice: tables.catalogProducts.marketPrice,
+        lowPrice: tables.catalogProducts.lowPrice,
         printings: tables.catalogProducts.printings,
         publishedOn: tables.catalogGroups.publishedOn,
         category: sql<string>`COALESCE(${tables.catalogProducts.categoryOverride}, ${tables.catalogProducts.category})`,
@@ -104,6 +109,13 @@ export async function projectSubmissionValue(
         (product?.printings as ProductPrinting[] | null) ?? null,
         line.printing,
         product?.marketPrice == null ? null : Number(product.marketPrice),
+      ),
+      // Lowest live listing for that printing — caps the sale estimate so we
+      // never value a card above what it's actually selling for.
+      lowPrice: lowForPrinting(
+        (product?.printings as ProductPrinting[] | null) ?? null,
+        line.printing,
+        product?.lowPrice == null ? null : Number(product.lowPrice),
       ),
       category:
         product?.category === "sealed" ? ("sealed" as const) : ("singles" as const),

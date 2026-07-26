@@ -71,6 +71,14 @@ type AnalyzeResponse = {
   lines: { raw: string; matched: boolean }[];
   parsedCount: number;
   matchedCount: number;
+  conditionCoverage?: {
+    eligible: number;
+    covered: number;
+    deferredByCap: number;
+    quotaExhausted: boolean;
+    requestsRemaining: number | null;
+    errors: string[];
+  };
 };
 
 type SearchHit = {
@@ -592,6 +600,32 @@ export function AnalyzerClient({ vendors }: { vendors: VendorStatus[] }) {
       {/* Results */}
       {result && totals && (
         <div className="space-y-4">
+          {result.conditionCoverage &&
+            result.conditionCoverage.eligible > 0 &&
+            result.conditionCoverage.covered <
+              result.conditionCoverage.eligible && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <span className="font-semibold">
+                  {result.conditionCoverage.covered} of{" "}
+                  {result.conditionCoverage.eligible} off-condition lines have
+                  real per-condition prices.
+                </span>{" "}
+                The rest are <span className="font-medium">estimated</span> from
+                the era curve.
+                {result.conditionCoverage.quotaExhausted
+                  ? " The pricing API's rate/quota limit was hit — wait a minute and re-run, or upgrade the plan."
+                  : result.conditionCoverage.deferredByCap > 0
+                    ? ` ${result.conditionCoverage.deferredByCap} more were deferred by the per-run cap — re-run to fetch them.`
+                    : ""}
+                {result.conditionCoverage.requestsRemaining !== null &&
+                  ` (${result.conditionCoverage.requestsRemaining} API calls left)`}
+                {result.conditionCoverage.errors.length > 0 && (
+                  <span className="mt-1 block text-xs text-amber-700">
+                    {result.conditionCoverage.errors[0]}
+                  </span>
+                )}
+              </div>
+            )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <SummaryCard
               label="Buylist (cash, after shipping)"

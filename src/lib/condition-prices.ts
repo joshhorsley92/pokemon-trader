@@ -97,6 +97,24 @@ export type EnsureLine = {
  * can't drain a day's quota. Failures are swallowed — a missing ladder just
  * falls back to the era curve.
  */
+/**
+ * What the overlay managed to cover this run. Surfaced to the operator so a
+ * partial refresh is visible — silently falling back to estimates is worse
+ * than saying "these 40 rows are estimated, re-run to fetch them".
+ */
+export type ConditionCoverage = {
+  /** Lines that wanted real data (off-NM, above the value floor) */
+  eligible: number;
+  /** Of those, how many ended up backed by real per-condition prices */
+  covered: number;
+  /** Wanted data but deferred by the per-run cap — re-run to pick them up */
+  deferredByCap: number;
+  /** Stopped early because the plan's rate/quota limit was hit */
+  quotaExhausted: boolean;
+  requestsRemaining: number | null;
+  errors: string[];
+};
+
 export async function ensureConditionPrices(
   lines: EnsureLine[],
   opts: {
@@ -105,7 +123,7 @@ export async function ensureConditionPrices(
     /** Don't re-fetch a card touched more recently than this. */
     ttlHours?: number;
   } = {},
-): Promise<ConditionPriceMap> {
+): Promise<{ map: ConditionPriceMap; coverage: ConditionCoverage }> {
   const minMarket = opts.minMarketPrice ?? 5;
   const maxCards = opts.maxCards ?? 60;
   const ttlHours = opts.ttlHours ?? 24;
@@ -118,7 +136,33 @@ export async function ensureConditionPrices(
     ),
   ];
   const cached = await loadConditionPrices(productIds);
-  if (!justTcgConfigured()) return cached;
+
+  // Lines that want real data at all — the denominator for coverage.
+  const eligibleLines = lines.filter(
+    (l) =>
+      l.productId !== null &&
+      Number.isInteger(l.productId) &&
+      (l.condition ?? "NM") !== "NM" &&
+      (l.marketPrice ?? 0) >= minMarket,
+  );
+  const coverageOf = (
+    map: ConditionPriceMap,
+    extra: Partial<ConditionCoverage> = {},
+  ): ConditionCoverage => ({
+    eligible: eligibleLines.length,
+    covered: eligibleLines.filter((l) =>
+      Boolean(ladderFor(map, l.productId, l.printing)),
+    ).length,
+    deferredByCap: 0,
+    quotaExhausted: false,
+    requestsRemaining: null,
+    errors: [],
+    ...extra,
+  });
+
+  if (!justTcgConfigured()) {
+    return { map: cached, coverage: coverageOf(cached) };
+  }
 
   // When each product was last fetched — the guard against hammering the API
   // with the same card every time a list is re-run.
@@ -156,24 +200,39 @@ export async function ensureConditionPrices(
     // retries ride along in an existing batch and the per-run cap bounds them.
     wanted.set(l.productId, Math.max(wanted.get(l.productId) ?? 0, market));
   }
-  if (wanted.size === 0) return cached;
+  if (wanted.size === 0) return { map: cached, coverage: coverageOf(cached) };
 
-  const toFetch = [...wanted.entries()]
-    .sort((a, b) => b[1] - a[1]) // most valuable first
-    .slice(0, maxCards)
-    .map(([id]) => id);
+  const ranked = [...wanted.entries()].sort((a, b) => b[1] - a[1]); // priciest first
+  const toFetch = ranked.slice(0, maxCards).map(([id]) => id);
+  const deferredByCap = Math.max(0, ranked.length - toFetch.length);
 
   try {
     const res = await refreshConditionPrices(toFetch);
-    if (res.pricesStored === 0) return cached;
-    // Re-read so the caller sees everything, old and new, in one map.
-    return await loadConditionPrices(productIds);
-  } catch {
-    return cached; // never let a pricing-overlay hiccup break the run
+    const map =
+      res.pricesStored > 0 ? await loadConditionPrices(productIds) : cached;
+    return {
+      map,
+      coverage: coverageOf(map, {
+        deferredByCap,
+        quotaExhausted: res.quotaExhausted,
+        requestsRemaining: res.requestsRemaining,
+        errors: res.errors,
+      }),
+    };
+  } catch (err) {
+    // Never let a pricing-overlay hiccup break the run — but say so.
+    return {
+      map: cached,
+      coverage: coverageOf(cached, {
+        deferredByCap,
+        errors: [err instanceof Error ? err.message : String(err)],
+      }),
+    };
   }
 }
 
 export type RefreshResult = {
+  quotaExhausted: boolean;
   productsRequested: number;
   pricesStored: number;
   callsUsed: number;
@@ -188,6 +247,7 @@ export async function refreshConditionPrices(
 ): Promise<RefreshResult> {
   const ids = [...new Set(productIds.filter((id) => Number.isInteger(id)))];
   const result: RefreshResult = {
+    quotaExhausted: false,
     productsRequested: ids.length,
     pricesStored: 0,
     callsUsed: 0,
@@ -206,6 +266,7 @@ export async function refreshConditionPrices(
   result.requestsRemaining = fetched.requestsRemaining;
   result.plan = fetched.plan;
   result.errors = fetched.errors;
+  result.quotaExhausted = fetched.quotaExhausted;
   if (fetched.prices.length === 0) return result;
 
   // Only store prices for products we actually carry — the FK would reject

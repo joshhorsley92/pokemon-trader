@@ -26,6 +26,24 @@ const TIMEOUT_MS = 20_000;
  */
 const BATCH_SIZE = Number(process.env.JUSTTCG_BATCH_SIZE ?? 20);
 
+/**
+ * Requests per minute allowed by the plan (Free 10, Starter 50, Pro 100).
+ * Batches are paced to stay under it — exceeding it returns 429 and wastes
+ * the call. Raise JUSTTCG_RPM when upgrading.
+ */
+const RPM = Math.max(1, Number(process.env.JUSTTCG_RPM ?? 10));
+const MIN_INTERVAL_MS = Math.ceil(60_000 / RPM) + 250; // margin for clock skew
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+let lastCallAt = 0;
+
+async function paced<T>(fn: () => Promise<T>): Promise<T> {
+  const wait = lastCallAt + MIN_INTERVAL_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCallAt = Date.now();
+  return fn();
+}
+
 /** JustTCG's condition wording → our stored values. */
 const CONDITION_MAP: Record<string, string> = {
   "near mint": "NM",
@@ -108,6 +126,8 @@ export type FetchResult = {
   requestsRemaining: number | null;
   plan: string | null;
   errors: string[];
+  /** True when the plan quota/rate limit stopped the run early */
+  quotaExhausted: boolean;
 };
 
 /**
@@ -125,6 +145,7 @@ export async function fetchConditionPrices(
     requestsRemaining: null,
     plan: null,
     errors: [],
+    quotaExhausted: false,
   };
   if (!apiKey) {
     result.errors.push("JUSTTCG_API_KEY not set");
@@ -132,27 +153,39 @@ export async function fetchConditionPrices(
   }
   const unique = [...new Set(productIds.filter((id) => Number.isInteger(id)))];
 
+  let quotaExhausted = false;
   for (const batch of chunk(unique, Math.max(1, BATCH_SIZE))) {
     try {
-      const res = await fetch(`${BASE_URL}/cards`, {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(
-          batch.map((id) => ({ tcgplayerId: String(id) })),
-        ),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-      result.callsUsed += 1;
+      // One retry on 429: a per-minute trip just needs a pause, whereas a
+      // daily/monthly exhaustion will fail again and we stop.
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        res = await paced(() =>
+          fetch(`${BASE_URL}/cards`, {
+            method: "POST",
+            headers: {
+              "x-api-key": apiKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(batch.map((id) => ({ tcgplayerId: String(id) }))),
+            signal: AbortSignal.timeout(TIMEOUT_MS),
+          }),
+        );
+        result.callsUsed += 1;
+        if (res.status !== 429 || attempt === 1) break;
+        await sleep(MIN_INTERVAL_MS * 2);
+      }
+      if (!res) continue;
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         result.errors.push(
           `HTTP ${res.status} on ${batch.length} ids: ${body.slice(0, 160)}`,
         );
-        // 401/403 = bad key, 429 = out of quota; either way, stop burning calls.
-        if (res.status === 401 || res.status === 403 || res.status === 429) break;
+        // 401/403 = bad key; 429 after a retry = quota gone. Stop either way.
+        if (res.status === 401 || res.status === 403 || res.status === 429) {
+          quotaExhausted = res.status === 429;
+          break;
+        }
         continue;
       }
       const body = (await res.json()) as JustTcgResponse;
@@ -170,5 +203,6 @@ export async function fetchConditionPrices(
       );
     }
   }
+  result.quotaExhausted = quotaExhausted;
   return result;
 }

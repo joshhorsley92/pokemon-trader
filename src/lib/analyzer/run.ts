@@ -5,7 +5,11 @@
 import { inArray, and, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { getSettings } from "@/lib/settings";
-import { ensureConditionPrices, ladderFor } from "@/lib/condition-prices";
+import {
+  ensureConditionPrices,
+  ladderFor,
+  type ConditionCoverage,
+} from "@/lib/condition-prices";
 import {
   lowForPrinting,
   priceForPrinting,
@@ -33,6 +37,8 @@ export type AnalyzedLine = {
 
 export type AnalyzeListResult = {
   summary: AnalyzerSummary;
+  /** How much of the run is backed by real per-condition prices */
+  conditionCoverage?: ConditionCoverage;
   lines: AnalyzedLine[];
   parsedCount: number;
   matchedCount: number;
@@ -207,7 +213,7 @@ export async function analyzeListText(
   // change a decision trigger a fetch, capped per run and TTL'd, so a big list
   // can't drain the metered quota. NM never needs one — it's TCGCSV market.
   onProgress?.("Checking per-condition prices…");
-  const conditionPrices = await ensureConditionPrices(
+  const { map: conditionPrices, coverage: conditionCoverage } = await ensureConditionPrices(
     items.map((it) => ({
       productId: it.productId,
       condition: it.condition,
@@ -242,6 +248,7 @@ export async function analyzeListText(
 
   return {
     summary,
+    conditionCoverage,
     lines,
     parsedCount: parsed.length,
     matchedCount: matches.filter((m) => m !== null).length,

@@ -131,7 +131,9 @@ export async function projectSubmissionValue(
   });
 
   // Lazy, capped per-condition refresh — same budget rules as the analyzer.
-  const conditionPrices = await ensureConditionPrices(
+  // Coverage isn't surfaced on this path yet — the trade box shows a single
+  // headline number, not per-line pricing provenance.
+  const { map: conditionPrices } = await ensureConditionPrices(
     items.map((it) => ({
       productId: it.productId,
       condition: it.condition,

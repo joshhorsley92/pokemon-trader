@@ -44,6 +44,11 @@ const LIMIT = flag("limit", 200);
 const STALE_DAYS = flag("stale-days", 7);
 const DRY = process.argv.includes("--dry");
 
+// src/lib/condition-prices imports @/db, which builds its own client from
+// DATABASE_URL. Without this the refresh would quietly hit a different
+// database than the one we just queried (locally: Docker instead of hosted).
+process.env.DATABASE_URL = connectionString;
+
 const client = postgres(connectionString, { prepare: false, max: 5 });
 const db = drizzle(client, { schema: tables });
 

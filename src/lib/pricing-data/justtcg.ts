@@ -31,25 +31,17 @@ const BATCH_SIZE = Number(process.env.JUSTTCG_BATCH_SIZE ?? 20);
  * Batches are paced to stay under it — exceeding it returns 429 and wastes
  * the call. Raise JUSTTCG_RPM when upgrading.
  */
-const RPM = Math.max(1, Number(process.env.JUSTTCG_RPM ?? 10));
 /**
- * Pace against RPM-1, not RPM. At exactly RPM the calls fit inside a single
- * 60s window and trip the limit: 10 calls spaced 6.0s apart span 54s, so all
- * ten land in one minute. Spacing on RPM-1 (6.67s) stretches the same ten to
- * just over 60s, keeping any rolling window under the cap. Costs ~6 seconds on
- * a full run and removes a guaranteed 429.
+ * Requests per minute the plan allows (Free 10, Starter 50, Pro 100). This is
+ * a budget, not a spacing rule — a whole window's worth can be spent at once,
+ * so we fire concurrently and only pause between windows.
  */
-const MIN_INTERVAL_MS = Math.ceil(60_000 / Math.max(1, RPM - 1)) + 250;
+const RPM = Math.max(1, Number(process.env.JUSTTCG_RPM ?? 10));
+
+/** How long to wait out a tripped per-minute window before retrying. */
+const RETRY_AFTER_MS = 61_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-let lastCallAt = 0;
-
-async function paced<T>(fn: () => Promise<T>): Promise<T> {
-  const wait = lastCallAt + MIN_INTERVAL_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastCallAt = Date.now();
-  return fn();
-}
 
 /** JustTCG's condition wording → our stored values. */
 const CONDITION_MAP: Record<string, string> = {
@@ -161,59 +153,69 @@ export async function fetchConditionPrices(
   }
   const unique = [...new Set(productIds.filter((id) => Number.isInteger(id)))];
 
-  let quotaExhausted = false;
   const batches = chunk(unique, Math.max(1, BATCH_SIZE));
-  let batchNo = 0;
-  for (const batch of batches) {
-    onProgress?.(batchNo++, batches.length);
-    try {
-      // One retry on 429: a per-minute trip just needs a pause, whereas a
-      // daily/monthly exhaustion will fail again and we stop.
-      let res: Response | null = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        res = await paced(() =>
-          fetch(`${BASE_URL}/cards`, {
-            method: "POST",
-            headers: {
-              "x-api-key": apiKey,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(batch.map((id) => ({ tcgplayerId: String(id) }))),
-            signal: AbortSignal.timeout(TIMEOUT_MS),
-          }),
-        );
+
+  /** One batch, with a single retry if we trip the per-minute window. */
+  async function sendBatch(batch: number[]): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(`${BASE_URL}/cards`, {
+          method: "POST",
+          headers: { "x-api-key": apiKey!, "Content-Type": "application/json" },
+          body: JSON.stringify(batch.map((id) => ({ tcgplayerId: String(id) }))),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
         result.callsUsed += 1;
-        if (res.status !== 429 || attempt === 1) break;
-        await sleep(MIN_INTERVAL_MS * 2);
-      }
-      if (!res) continue;
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        result.errors.push(
-          `HTTP ${res.status} on ${batch.length} ids: ${body.slice(0, 160)}`,
-        );
-        // 401/403 = bad key; 429 after a retry = quota gone. Stop either way.
-        if (res.status === 401 || res.status === 403 || res.status === 429) {
-          quotaExhausted = res.status === 429;
-          break;
+        if (res.status === 429 && attempt === 0) {
+          // The window is per-minute, so waiting it out is the whole fix.
+          await sleep(RETRY_AFTER_MS);
+          continue;
         }
-        continue;
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          result.errors.push(
+            `HTTP ${res.status} on ${batch.length} ids: ${body.slice(0, 160)}`,
+          );
+          if (res.status === 429) result.quotaExhausted = true;
+          return;
+        }
+        const body = (await res.json()) as JustTcgResponse;
+        for (const card of body.data ?? []) {
+          result.prices.push(...rowsFromCard(card));
+        }
+        if (body._metadata?.apiRequestsRemaining != null) {
+          // Concurrent batches each report their own count; keep the lowest,
+          // which is the truest "left after this run".
+          result.requestsRemaining =
+            result.requestsRemaining === null
+              ? body._metadata.apiRequestsRemaining
+              : Math.min(
+                  result.requestsRemaining,
+                  body._metadata.apiRequestsRemaining,
+                );
+        }
+        if (body._metadata?.apiPlan) result.plan = body._metadata.apiPlan;
+        return;
+      } catch (err) {
+        result.callsUsed += 1;
+        result.errors.push(err instanceof Error ? err.message : String(err));
+        return;
       }
-      const body = (await res.json()) as JustTcgResponse;
-      for (const card of body.data ?? []) {
-        result.prices.push(...rowsFromCard(card));
-      }
-      if (body._metadata?.apiRequestsRemaining != null) {
-        result.requestsRemaining = body._metadata.apiRequestsRemaining;
-      }
-      if (body._metadata?.apiPlan) result.plan = body._metadata.apiPlan;
-    } catch (err) {
-      result.callsUsed += 1;
-      result.errors.push(
-        err instanceof Error ? err.message : String(err),
-      );
     }
   }
-  result.quotaExhausted = quotaExhausted;
+
+  // Fire the whole run at once. The plan's limit is a per-minute BUDGET, not a
+  // spacing requirement — measured: 10 concurrent batches (200 cards) all
+  // returned 200 in 1.2s. Callers cap the card count so one run can't exceed a
+  // window's worth of calls, which keeps this well inside a serverless
+  // function's timeout instead of the ~60s an evenly-paced run would take.
+  onProgress?.(0, batches.length);
+  for (const group of chunk(batches, Math.max(1, RPM))) {
+    await Promise.all(group.map(sendBatch));
+    // A second group would spend another window's budget; pause between them.
+    if (batches.length > RPM) await sleep(RETRY_AFTER_MS);
+    if (result.quotaExhausted) break;
+  }
+  onProgress?.(batches.length, batches.length);
   return result;
 }

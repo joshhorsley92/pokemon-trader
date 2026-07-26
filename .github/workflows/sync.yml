@@ -43,3 +43,15 @@ jobs:
         env:
           DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
         run: npx tsx scripts/sync-buylists.ts
+      # Real per-condition prices. Warming in bulk belongs here rather than on
+      # the request path: a run larger than one rate-limit window has to wait
+      # out the window between bursts, which no serverless function will
+      # tolerate. The app still tops up on demand (CONDITION_MAX_CARDS) — that
+      # path is sized to a single window, so it returns in seconds.
+      # The script exits 0 when no key is configured, so this stays green.
+      - name: Sync per-condition prices
+        env:
+          DIRECT_DATABASE_URL: ${{ secrets.DIRECT_DATABASE_URL }}
+          JUSTTCG_API_KEY: ${{ secrets.JUSTTCG_API_KEY }}
+        run: npx tsx scripts/sync-condition-prices.ts --limit 400 --min-value 10
+        continue-on-error: true

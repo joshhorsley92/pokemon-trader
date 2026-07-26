@@ -59,8 +59,11 @@ const db = drizzle(client, { schema: tables });
 
 async function main() {
   if (!process.env.JUSTTCG_API_KEY && !DRY) {
-    console.error("JUSTTCG_API_KEY not set — nothing to do.");
-    process.exit(1);
+    // Not a failure: the overlay is optional and every caller falls back to
+    // the estimated curve. Exiting 0 keeps the nightly workflow green.
+    console.log("JUSTTCG_API_KEY not set — skipping condition-price sync.");
+    await client.end();
+    return;
   }
 
   // Working set, priority-ordered, excluding anything refreshed recently.

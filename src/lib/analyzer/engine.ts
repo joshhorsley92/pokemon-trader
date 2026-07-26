@@ -58,6 +58,12 @@ export type VendorOffer = {
   creditPrice: number | null;
   /** Vendor-published per-condition cash ladder, e.g. {NM: 2.5, LP: 2.25} */
   conditionPrices?: Record<string, number> | null;
+  /**
+   * Printing this offer is for, as the vendor labels it ("Reverse Foil",
+   * "Holo", null when they don't distinguish). Gates which card it can price —
+   * see offerMatchesPrinting.
+   */
+  printing?: string | null;
   buying: boolean;
   url?: string | null;
 };
@@ -181,6 +187,50 @@ export function adjustOffer(
   };
 }
 
+/**
+ * Reduce a printing label to a comparable bucket. Our catalog uses TCGplayer
+ * subtypes ("Normal", "Holofoil", "Reverse Holofoil", "1st Edition Holofoil");
+ * vendors use their own words ("Reverse Foil", "Holo", "NON-HOLO", "Poke Ball
+ * Foil"). Anything unrecognized returns its cleaned text so distinct specials
+ * (Master Ball vs Poke Ball foil) stay distinct instead of collapsing together.
+ */
+export function printingBucket(
+  printing: string | null | undefined,
+): string | null {
+  if (!printing) return null;
+  const p = printing.trim().toLowerCase();
+  if (!p) return null;
+  // Order matters: "reverse holofoil" must not be read as plain holo.
+  if (/reverse/.test(p)) return "reverse";
+  if (/master\s*ball/.test(p)) return "masterball";
+  if (/poke\s*ball/.test(p)) return "pokeball";
+  if (/non-?\s*holo/.test(p) || /^normal\b/.test(p) || /unlimited normal/.test(p))
+    return "normal";
+  if (/holo|foil/.test(p)) return "holo";
+  return p;
+}
+
+/**
+ * Should this vendor offer be used to price this card's printing?
+ *
+ * Vendors list each printing as its own buylist entry at very different prices
+ * (a Reverse Holo can be 20x the Normal). Matching purely on product id used
+ * the best of ALL printings, which massively overvalued plain cards. Rules:
+ *  - vendor didn't say (null printing, e.g. Full Grip) -> keep, best effort
+ *  - we don't know our card's printing -> keep, can't discriminate
+ *  - both known -> keep only when the buckets agree
+ */
+export function offerMatchesPrinting(
+  offerPrinting: string | null | undefined,
+  itemPrinting: string | null | undefined,
+): boolean {
+  const offer = printingBucket(offerPrinting);
+  if (offer === null) return true;
+  const item = printingBucket(itemPrinting);
+  if (item === null) return true;
+  return offer === item;
+}
+
 /** Per-unit net proceeds of a TCGplayer market-price sale. */
 export function netTcgUnit(
   marketPrice: number,
@@ -246,6 +296,9 @@ export function analyze(
     let best: Work["best"] = null;
     for (const offer of item.offers) {
       if (!offer.buying) continue;
+      // Only price against offers for THIS printing — a vendor's Reverse Holo
+      // entry must not set the price for a Normal copy.
+      if (!offerMatchesPrinting(offer.printing, item.printing)) continue;
       const adj = adjustOffer(offer, item.condition, multipliers);
       const score = adj.cash ?? (adj.credit !== null ? adj.credit * 0.7 : null);
       if (score === null || score < eco.buylist_min_offer) continue;

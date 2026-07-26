@@ -82,6 +82,7 @@ export async function projectSubmissionValue(
       creditPrice: row.creditPrice === null ? null : Number(row.creditPrice),
       conditionPrices:
         (row.conditionPrices as Record<string, number> | null) ?? null,
+      printing: row.printing,
       buying: row.buying,
       url: row.vendorUrl,
     });

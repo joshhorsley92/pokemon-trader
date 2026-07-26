@@ -135,6 +135,7 @@ export async function analyzeListText(
       cashPrice: row.cashPrice === null ? null : Number(row.cashPrice),
       creditPrice: row.creditPrice === null ? null : Number(row.creditPrice),
       conditionPrices: (row.conditionPrices ?? null) as Record<string, number> | null,
+      printing: row.printing,
       buying: row.buying,
       url: row.vendorUrl,
     });

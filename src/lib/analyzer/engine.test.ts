@@ -4,6 +4,8 @@ import {
   adjustOffer,
   DEFAULT_ANALYZER_ECONOMICS,
   netTcgUnit,
+  offerMatchesPrinting,
+  printingBucket,
   type AnalyzerItem,
   type VendorOffer,
 } from "./engine";
@@ -212,5 +214,53 @@ describe("analyze decisions", () => {
     expect(out.totals.buylistCash).toBeCloseTo(45, 2);
     expect(out.totals.buylistCredit).toBeCloseTo(51.75, 2);
     expect(out.totals.cards).toBe(5);
+  });
+});
+
+describe("printing-aware buylist offers", () => {
+  it("buckets vendor and catalog printing labels to comparable values", () => {
+    expect(printingBucket("Reverse Holofoil")).toBe("reverse");
+    expect(printingBucket("Reverse Foil")).toBe("reverse");
+    expect(printingBucket("Holofoil")).toBe("holo");
+    expect(printingBucket("Holo")).toBe("holo");
+    expect(printingBucket("1st Edition Holofoil")).toBe("holo");
+    expect(printingBucket("Normal")).toBe("normal");
+    expect(printingBucket("NON-HOLO")).toBe("normal");
+    expect(printingBucket(null)).toBeNull();
+    // Distinct specials stay distinct
+    expect(printingBucket("Master Ball Foil")).not.toBe(
+      printingBucket("Poke Ball Foil"),
+    );
+  });
+
+  it("keeps offers the vendor didn't label, or when our printing is unknown", () => {
+    expect(offerMatchesPrinting(null, "Normal")).toBe(true);
+    expect(offerMatchesPrinting("Reverse Foil", null)).toBe(true);
+  });
+
+  it("rejects an offer for a different printing", () => {
+    expect(offerMatchesPrinting("Reverse Foil", "Normal")).toBe(false);
+    expect(offerMatchesPrinting("Holo", "Normal")).toBe(false);
+    expect(offerMatchesPrinting("Reverse Foil", "Reverse Holofoil")).toBe(true);
+  });
+
+  it("prices a Normal card off the Normal offer, not the Reverse Holo one", () => {
+    // Real case: CoolStuff pays $10 for Exeggcute (76) Reverse Foil but only
+    // $0.50 for the Normal. Matching on product id alone used the $10.
+    const out = analyze(
+      [
+        item({
+          printing: "Normal",
+          marketPrice: 2.33,
+          offers: [
+            offer({ vendor: "coolstuff", printing: "Reverse Foil", cashPrice: 10, creditPrice: 12.5 }),
+            offer({ vendor: "coolstuff", printing: null, cashPrice: 0.5, creditPrice: 0.63 }),
+          ],
+        }),
+      ],
+      eco,
+      mult,
+    );
+    expect(out.results[0].bestOffer?.cash).toBeCloseTo(0.5, 2);
   });
 });

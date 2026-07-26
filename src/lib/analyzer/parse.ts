@@ -61,11 +61,45 @@ export function normalizeCondition(raw: string | null | undefined): string | nul
   return null;
 }
 
-function findColumn(headers: string[], aliases: string[]): number {
+/**
+ * Distinctive keywords used for a substring fallback when no header matches a
+ * field exactly. Real exports carry headers like "Card Condition", "Cond.",
+ * "Grade" or "Printing/Finish" that exact matching misses — which silently
+ * dropped the condition and made every row quote as NM. Only unambiguous
+ * keywords belong here: a bare "name" would wrongly claim "Set Name".
+ */
+const HEADER_KEYWORDS: Record<keyof Omit<ParsedLine, "raw">, string[]> = {
+  quantity: ["quantity", "qty"],
+  name: ["card name", "product name", "item name"],
+  setName: ["set name", "expansion", "edition"],
+  cardNumber: ["card number", "collector number", "card #"],
+  printing: ["printing", "foil", "finish", "variant"],
+  // "cond" last: it also matches "Cond."/"Condition Name" but is loose enough
+  // to catch odd headers, so the precise keywords get first refusal.
+  condition: ["condition", "grade", "cond"],
+  productId: ["product id", "productid", "tcgplayer id"],
+};
+
+function findColumn(
+  headers: string[],
+  aliases: string[],
+  keywords: string[] = [],
+  claimed: Set<number> = new Set(),
+): number {
   const normalized = headers.map((h) => h.trim().toLowerCase());
   for (const alias of aliases) {
     const i = normalized.indexOf(alias);
     if (i !== -1) return i;
+  }
+  // Substring fallback — shortest header wins so "Condition" beats
+  // "Condition Notes" when both are present.
+  let best = -1;
+  for (const kw of keywords) {
+    for (let i = 0; i < normalized.length; i++) {
+      if (claimed.has(i) || !normalized[i].includes(kw)) continue;
+      if (best === -1 || normalized[i].length < normalized[best].length) best = i;
+    }
+    if (best !== -1) return best;
   }
   return -1;
 }
@@ -78,11 +112,21 @@ export function parseCsvList(csvText: string): ParsedLine[] {
   if (rows.length < 2) return [];
 
   const headers = rows[0];
+  const fields = Object.keys(HEADER_ALIASES) as (keyof typeof HEADER_ALIASES)[];
+  // Two passes: every exact header match is claimed first, then a substring
+  // fallback fills the gaps without stealing a column another field already owns.
   const col = Object.fromEntries(
-    (Object.keys(HEADER_ALIASES) as (keyof typeof HEADER_ALIASES)[]).map(
-      (field) => [field, findColumn(headers, HEADER_ALIASES[field])],
-    ),
+    fields.map((field) => [field, findColumn(headers, HEADER_ALIASES[field])]),
   ) as Record<keyof typeof HEADER_ALIASES, number>;
+  const claimed = new Set(Object.values(col).filter((i) => i !== -1));
+  for (const field of fields) {
+    if (col[field] !== -1) continue;
+    const i = findColumn(headers, [], HEADER_KEYWORDS[field], claimed);
+    if (i !== -1) {
+      col[field] = i;
+      claimed.add(i);
+    }
+  }
 
   // A list we can't get card names or product ids out of isn't a card list
   if (col.name === -1 && col.productId === -1) return [];

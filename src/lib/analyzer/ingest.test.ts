@@ -183,3 +183,35 @@ describe("CatalogIndex", () => {
     expect(idx.match({})).toBeNull();
   });
 });
+
+describe("CSV header detection (real-world exports)", () => {
+  it("finds the condition column when the header isn't an exact alias", () => {
+    // Exports use "Card Condition", "Cond." or "Grade"; exact-only matching
+    // silently dropped the condition and quoted every row as NM.
+    const variants = [
+      ["Quantity,Card Name,Set,Card Number,Card Condition\n1,Exeggcute,Aquapolis,76,Lightly Played", "LP"],
+      ["Qty,Card Name,Set,Number,Cond.\n1,Exeggcute,Aquapolis,76,Moderately Played", "MP"],
+      ["Quantity,Card Name,Set,Card Number,Grade\n1,Exeggcute,Aquapolis,76,Heavily Played", "HP"],
+    ] as const;
+    for (const [csv, expected] of variants) {
+      expect(parseCsvList(csv)[0]?.condition).toBe(expected);
+    }
+  });
+
+  it("does not let a fuzzy match steal a column another field owns", () => {
+    const rows = parseCsvList(
+      "Quantity,Card Name,Set Name,Card Number,Condition\n1,Umbreon,Skyridge,H30,Lightly Played",
+    );
+    expect(rows[0]?.name).toBe("Umbreon");
+    expect(rows[0]?.setName).toBe("Skyridge");
+    expect(rows[0]?.condition).toBe("LP");
+  });
+
+  it("still honors exact headers", () => {
+    const rows = parseCsvList(
+      "Quantity,Name,Set,Card Number,Condition,Printing\n1,Charizard,Base Set,4,Near Mint,Holofoil",
+    );
+    expect(rows[0]?.condition).toBe("NM");
+    expect(rows[0]?.printing).toBe("Holofoil");
+  });
+});

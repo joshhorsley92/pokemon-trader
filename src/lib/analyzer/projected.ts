@@ -52,6 +52,7 @@ export async function projectSubmissionValue(
         groupName: tables.catalogGroups.name,
         marketPrice: tables.catalogProducts.marketPrice,
         printings: tables.catalogProducts.printings,
+        publishedOn: tables.catalogGroups.publishedOn,
         category: sql<string>`COALESCE(${tables.catalogProducts.categoryOverride}, ${tables.catalogProducts.category})`,
       })
       .from(tables.catalogProducts)
@@ -107,6 +108,10 @@ export async function projectSubmissionValue(
       category:
         product?.category === "sealed" ? ("sealed" as const) : ("singles" as const),
       printing: line.printing,
+      // Drives the condition-curve era so played vintage isn't overvalued.
+      releaseYear: product?.publishedOn
+        ? Number(String(product.publishedOn).slice(0, 4))
+        : null,
       tcgplayerId: line.productId,
       offers: offersByProduct.get(line.productId) ?? [],
     };
@@ -116,6 +121,7 @@ export async function projectSubmissionValue(
     items,
     settings.analyzer_economics,
     settings.condition_multipliers,
+    settings.condition_curve,
   );
   const projectedRevenue =
     Math.round(

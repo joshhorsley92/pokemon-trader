@@ -9,6 +9,10 @@
  * All money math is done in cents (integers) to avoid float drift.
  */
 import {
+  resolveSinglesMultiplier,
+  type ConditionCurve,
+} from "@/lib/condition-curve";
+import {
   conditionMultiplier,
   type ConditionMultipliers,
   DEFAULT_CONDITION_MULTIPLIERS,
@@ -85,6 +89,12 @@ export type AnalyzerItem = {
   cardNumber?: string | null;
   rarity?: string | null;
   printing?: string | null;
+  /**
+   * Set release year — picks the era rung on the condition curve. Vintage
+   * cards lose far more value off-condition than modern ones, so without this
+   * the flat ladder wildly overvalues played WOTC cards.
+   */
+  releaseYear?: number | null;
   /** Real TCGplayer product id only (never synthetic) — import CSV column */
   tcgplayerId?: number | null;
   // UI passthrough (manual analyzer): link to check the live listing, and the
@@ -158,6 +168,8 @@ export function adjustOffer(
   offer: VendorOffer,
   condition: string | null | undefined,
   multipliers: ConditionMultipliers,
+  /** Pre-resolved condition ratio (era curve). Falls back to the flat table. */
+  multiplierOverride?: number,
 ): { cash: number | null; credit: number | null } {
   const cond = condition ?? "NM";
   const ladder = offer.conditionPrices ?? undefined;
@@ -174,7 +186,8 @@ export function adjustOffer(
           : null,
     };
   }
-  const mult = conditionMultiplier(multipliers, "singles", cond);
+  const mult =
+    multiplierOverride ?? conditionMultiplier(multipliers, "singles", cond);
   return {
     cash:
       offer.cashPrice !== null
@@ -237,8 +250,12 @@ export function netTcgUnit(
   condition: string | null | undefined,
   eco: AnalyzerEconomics,
   multipliers: ConditionMultipliers,
+  /** Pre-resolved condition ratio (era curve). Falls back to the flat table. */
+  multiplierOverride?: number,
 ): number {
-  const mult = conditionMultiplier(multipliers, "singles", condition ?? "NM");
+  const mult =
+    multiplierOverride ??
+    conditionMultiplier(multipliers, "singles", condition ?? "NM");
   const saleCents = Math.round(toCents(marketPrice) * mult);
   // Multiply before dividing: 13.85/100 is inexact in floats and can flip
   // the cent rounding on exact-half fees.
@@ -262,6 +279,12 @@ export function analyze(
   items: AnalyzerItem[],
   eco: AnalyzerEconomics = DEFAULT_ANALYZER_ECONOMICS,
   multipliers: ConditionMultipliers = DEFAULT_CONDITION_MULTIPLIERS,
+  /**
+   * Era/value condition curve — the same one the customer quote uses. When
+   * supplied, singles price off it instead of the flat ladder, which overpaid
+   * played vintage badly (Base Set MP was valued at 0.70 of NM vs ~0.32 real).
+   */
+  curve?: ConditionCurve,
 ): AnalyzerSummary {
   type Work = {
     item: AnalyzerItem;
@@ -269,6 +292,8 @@ export function analyze(
     netTcg: number | null;
     decision: Decision;
     flags: string[];
+    /** Resolved condition ratio for this card (curve when available). */
+    condMult: number;
   };
 
   const work: Work[] = items.map((item) => {
@@ -293,13 +318,26 @@ export function analyze(
 
     // Best offer = highest condition-adjusted cash (fall back to credit-only
     // vendors when nobody pays cash).
+    // One condition ratio per card, shared by the buylist and TCG math. The
+    // era curve needs the card's own market price and release year, so it
+    // can't be hoisted out of the loop.
+    const condMult =
+      curve && item.category !== "sealed"
+        ? resolveSinglesMultiplier(
+            curve,
+            item.condition,
+            item.releaseYear,
+            item.marketPrice ?? 0,
+          ).multiplier
+        : undefined;
+
     let best: Work["best"] = null;
     for (const offer of item.offers) {
       if (!offer.buying) continue;
       // Only price against offers for THIS printing — a vendor's Reverse Holo
       // entry must not set the price for a Normal copy.
       if (!offerMatchesPrinting(offer.printing, item.printing)) continue;
-      const adj = adjustOffer(offer, item.condition, multipliers);
+      const adj = adjustOffer(offer, item.condition, multipliers, condMult);
       const score = adj.cash ?? (adj.credit !== null ? adj.credit * 0.7 : null);
       if (score === null || score < eco.buylist_min_offer) continue;
       const bestScore =
@@ -313,7 +351,7 @@ export function analyze(
 
     const netTcg =
       item.marketPrice !== null
-        ? netTcgUnit(item.marketPrice, item.condition, eco, multipliers)
+        ? netTcgUnit(item.marketPrice, item.condition, eco, multipliers, condMult)
         : null;
 
     // Vendor buylists occasionally publish glitched prices (observed live:
@@ -328,7 +366,16 @@ export function analyze(
       flags.push("offer ≫ market — verify");
     }
 
-    return { item, best, netTcg, decision: "BULK" as Decision, flags };
+    return {
+      item,
+      best,
+      netTcg,
+      decision: "BULK" as Decision,
+      flags,
+      condMult:
+        condMult ??
+        conditionMultiplier(multipliers, "singles", item.condition ?? "NM"),
+    };
   });
 
   // Initial decisions ignoring shipping, then iterate amortization.
@@ -362,12 +409,7 @@ export function analyze(
       w.item.marketPrice !== null
         ? toDollars(
             Math.round(
-              toCents(w.item.marketPrice) *
-                conditionMultiplier(
-                  multipliers,
-                  "singles",
-                  w.item.condition ?? "NM",
-                ),
+              toCents(w.item.marketPrice) * w.condMult,
             ),
           )
         : null,

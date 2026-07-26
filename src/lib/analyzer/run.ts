@@ -115,16 +115,25 @@ export async function analyzeListText(
             id: tables.catalogProducts.id,
             printings: tables.catalogProducts.printings,
             tcgplayerUrl: tables.catalogProducts.tcgplayerUrl,
+            publishedOn: tables.catalogGroups.publishedOn,
           })
           .from(tables.catalogProducts)
+          .leftJoin(
+            tables.catalogGroups,
+            eq(tables.catalogGroups.id, tables.catalogProducts.groupId),
+          )
           .where(inArray(tables.catalogProducts.id, productIds))
       : Promise.resolve([]),
   ]);
   const printingsByProduct = new Map<number, ProductPrinting[]>();
   const tcgUrlByProduct = new Map<number, string | null>();
+  const yearByProduct = new Map<number, number | null>();
   for (const p of productMeta) {
     printingsByProduct.set(p.id, (p.printings as ProductPrinting[] | null) ?? []);
     tcgUrlByProduct.set(p.id, p.tcgplayerUrl);
+    // Release year drives the condition-curve era (vintage vs modern).
+    const year = p.publishedOn ? Number(String(p.publishedOn).slice(0, 4)) : null;
+    yearByProduct.set(p.id, Number.isFinite(year) ? year : null);
   }
   const offersByProduct = new Map<number, VendorOffer[]>();
   for (const row of offerRows) {
@@ -171,6 +180,7 @@ export async function analyzeListText(
       cardNumber: match?.entry.cardNumber ?? line.cardNumber,
       rarity: match?.entry.rarity ?? null,
       printing,
+      releaseYear: productId !== null ? (yearByProduct.get(productId) ?? null) : null,
       tcgplayerId: productId,
       tcgUrl: productId !== null ? (tcgUrlByProduct.get(productId) ?? null) : null,
       availablePrintings:
@@ -186,6 +196,7 @@ export async function analyzeListText(
     items,
     settings.analyzer_economics,
     settings.condition_multipliers,
+    settings.condition_curve,
   );
 
   const lines: AnalyzedLine[] = parsed.map((line, i) => {

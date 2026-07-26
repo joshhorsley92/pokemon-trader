@@ -10,6 +10,7 @@ import {
   type VendorOffer,
 } from "./engine";
 import { DEFAULT_CONDITION_MULTIPLIERS } from "@/lib/conditions";
+import { DEFAULT_CONDITION_CURVE } from "@/lib/condition-curve";
 
 const eco = { ...DEFAULT_ANALYZER_ECONOMICS };
 const mult = DEFAULT_CONDITION_MULTIPLIERS;
@@ -262,5 +263,43 @@ describe("printing-aware buylist offers", () => {
       mult,
     );
     expect(out.results[0].bestOffer?.cash).toBeCloseTo(0.5, 2);
+  });
+});
+
+describe("era condition curve in the analyzer", () => {
+  const vintage = (condition: string, releaseYear = 1999) =>
+    item({ condition, releaseYear, marketPrice: 8.88, category: "singles" });
+
+  it("prices played vintage off the era curve, not the flat ladder", () => {
+    // Real case: Electrode (Base Set 1999), NM market $8.88. The flat ladder
+    // valued MP at 0.70 -> $6.22; TCGplayer's actual MP sits at ~$2.78-2.86.
+    const flat = analyze([vintage("MP")], eco, mult);
+    const curved = analyze([vintage("MP")], eco, mult, DEFAULT_CONDITION_CURVE);
+    expect(flat.results[0].estSalePrice).toBeCloseTo(6.22, 2);
+    expect(curved.results[0].estSalePrice).toBeCloseTo(3.11, 2);
+  });
+
+  it("keeps the era gradient — modern holds condition value better", () => {
+    const est = (year: number) =>
+      analyze([vintage("MP", year)], eco, mult, DEFAULT_CONDITION_CURVE)
+        .results[0].estSalePrice!;
+    expect(est(1999)).toBeLessThan(est(2010));
+    expect(est(2010)).toBeLessThan(est(2024));
+  });
+
+  it("discounts vendor buylist offers on the same curve", () => {
+    const withOffer = {
+      ...vintage("MP"),
+      offers: [offer({ vendor: "coolstuff", cashPrice: 10, creditPrice: 12.5 })],
+    };
+    const flat = analyze([withOffer], eco, mult);
+    const curved = analyze([withOffer], eco, mult, DEFAULT_CONDITION_CURVE);
+    expect(flat.results[0].bestOffer?.cash).toBeCloseTo(7, 2); // 10 * 0.70
+    expect(curved.results[0].bestOffer?.cash).toBeCloseTo(3.5, 2); // 10 * 0.35
+  });
+
+  it("leaves NM untouched", () => {
+    const curved = analyze([vintage("NM")], eco, mult, DEFAULT_CONDITION_CURVE);
+    expect(curved.results[0].estSalePrice).toBeCloseTo(8.88, 2);
   });
 });

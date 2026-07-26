@@ -32,7 +32,14 @@ const BATCH_SIZE = Number(process.env.JUSTTCG_BATCH_SIZE ?? 20);
  * the call. Raise JUSTTCG_RPM when upgrading.
  */
 const RPM = Math.max(1, Number(process.env.JUSTTCG_RPM ?? 10));
-const MIN_INTERVAL_MS = Math.ceil(60_000 / RPM) + 250; // margin for clock skew
+/**
+ * Pace against RPM-1, not RPM. At exactly RPM the calls fit inside a single
+ * 60s window and trip the limit: 10 calls spaced 6.0s apart span 54s, so all
+ * ten land in one minute. Spacing on RPM-1 (6.67s) stretches the same ten to
+ * just over 60s, keeping any rolling window under the cap. Costs ~6 seconds on
+ * a full run and removes a guaranteed 429.
+ */
+const MIN_INTERVAL_MS = Math.ceil(60_000 / Math.max(1, RPM - 1)) + 250;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let lastCallAt = 0;
@@ -137,6 +144,7 @@ export type FetchResult = {
  */
 export async function fetchConditionPrices(
   productIds: number[],
+  onProgress?: (done: number, total: number) => void,
 ): Promise<FetchResult> {
   const apiKey = process.env.JUSTTCG_API_KEY;
   const result: FetchResult = {
@@ -154,7 +162,10 @@ export async function fetchConditionPrices(
   const unique = [...new Set(productIds.filter((id) => Number.isInteger(id)))];
 
   let quotaExhausted = false;
-  for (const batch of chunk(unique, Math.max(1, BATCH_SIZE))) {
+  const batches = chunk(unique, Math.max(1, BATCH_SIZE));
+  let batchNo = 0;
+  for (const batch of batches) {
+    onProgress?.(batchNo++, batches.length);
     try {
       // One retry on 429: a per-minute trip just needs a pause, whereas a
       // daily/monthly exhaustion will fail again and we stop.

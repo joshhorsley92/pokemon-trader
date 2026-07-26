@@ -212,7 +212,6 @@ export async function analyzeListText(
   // Real per-condition prices, cache-first. Only off-NM lines worth enough to
   // change a decision trigger a fetch, capped per run and TTL'd, so a big list
   // can't drain the metered quota. NM never needs one — it's TCGCSV market.
-  onProgress?.("Checking per-condition prices…");
   const { map: conditionPrices, coverage: conditionCoverage } = await ensureConditionPrices(
     items.map((it) => ({
       productId: it.productId,
@@ -221,6 +220,7 @@ export async function analyzeListText(
       marketPrice: it.marketPrice,
       category: it.category,
     })),
+    { onProgress },
   );
   for (const it of items) {
     it.conditionLadder = ladderFor(conditionPrices, it.productId, it.printing);

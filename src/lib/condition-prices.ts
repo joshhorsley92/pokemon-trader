@@ -124,10 +124,16 @@ export async function ensureConditionPrices(
     maxCards?: number;
     /** Don't re-fetch a card touched more recently than this. */
     ttlHours?: number;
+    /** Surfaced to the operator — a paced fetch can take ~a minute on free */
+    onProgress?: (message: string) => void;
   } = {},
 ): Promise<{ map: ConditionPriceMap; coverage: ConditionCoverage }> {
   const minMarket = opts.minMarketPrice ?? 5;
-  const maxCards = opts.maxCards ?? 60;
+  // 200 cards = 10 calls at the free tier's 20/batch, which is also its
+  // per-minute ceiling — so a fully-uncovered run spends about a minute
+  // fetching. On a paid plan (100/batch, 50/min) the same 200 cards is 2
+  // calls and a couple of seconds.
+  const maxCards = opts.maxCards ?? Number(process.env.CONDITION_MAX_CARDS ?? 200);
   const ttlHours = opts.ttlHours ?? 24;
 
   const productIds = [
@@ -211,7 +217,11 @@ export async function ensureConditionPrices(
   const deferredByCap = Math.max(0, ranked.length - toFetch.length);
 
   try {
-    const res = await refreshConditionPrices(toFetch);
+    const res = await refreshConditionPrices(toFetch, (done, total) =>
+      opts.onProgress?.(
+        `Fetching real per-condition prices — batch ${done + 1} of ${total}…`,
+      ),
+    );
     const map =
       res.pricesStored > 0 ? await loadConditionPrices(productIds) : cached;
     return {
@@ -248,6 +258,7 @@ export type RefreshResult = {
 /** Fetch fresh condition prices for these products and upsert the cache. */
 export async function refreshConditionPrices(
   productIds: number[],
+  onProgress?: (done: number, total: number) => void,
 ): Promise<RefreshResult> {
   const ids = [...new Set(productIds.filter((id) => Number.isInteger(id)))];
   const result: RefreshResult = {
@@ -265,7 +276,7 @@ export async function refreshConditionPrices(
   }
   if (ids.length === 0) return result;
 
-  const fetched = await fetchConditionPrices(ids);
+  const fetched = await fetchConditionPrices(ids, onProgress);
   result.callsUsed = fetched.callsUsed;
   result.requestsRemaining = fetched.requestsRemaining;
   result.plan = fetched.plan;
